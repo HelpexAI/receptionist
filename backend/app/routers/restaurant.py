@@ -1,24 +1,36 @@
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 from app.database import get_db, SessionLocal
-from app.models import Business, MenuItem, RestaurantTable, RestaurantReservation, RestaurantOrder
+from app.models import Business, MenuItem, MenuCategory, RestaurantTable, RestaurantReservation, RestaurantOrder
 from app.schemas import (
     MenuItemCreateRequest,
+    MenuItemUpdateRequest,
     MenuItemUpdateAvailabilityRequest,
     MenuItemResponse,
+    MenuCategoryCreateRequest,
+    MenuCategoryResponse,
+    KitchenPinUpdateRequest,
+    KitchenVerifyRequest,
+    ScreenPinsResponse,
+    ScreenPinsUpdateRequest,
     RestaurantTableCreateRequest,
     RestaurantTableResponse,
     RestaurantReservationResponse,
     RestaurantOrderCreateRequest,
+    RestaurantOrderUpdateRequest,
     RestaurantOrderStatusUpdateRequest,
-    RestaurantOrderResponse
+    RiderOrderStatusUpdateRequest,
+    RestaurantOrderResponse,
+    RestaurantSettingsUpdateRequest,
+    RestaurantSettingsResponse,
 )
 from app.deps import get_current_restaurant
+from app.security import create_access_token
 from app.services import waha_service, whatsapp_service
 
 logger = logging.getLogger("restaurant_orders")
@@ -41,12 +53,122 @@ def create_menu_item(
         name=payload.name,
         category=payload.category,
         price=payload.price,
-        is_available=payload.is_available
+        is_available=payload.is_available,
+        description=payload.description,
+        variants=payload.variants or [],
+        addons=payload.addons or []
     )
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
     return new_item
+
+@router.put(
+    "/menu/{item_id}",
+    response_model=MenuItemResponse,
+    summary="Update full menu item details"
+)
+def update_menu_item(
+    item_id: UUID,
+    payload: MenuItemUpdateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    item = db.query(MenuItem).filter(MenuItem.id == item_id, MenuItem.business_id == current_business.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    if payload.name is not None: item.name = payload.name
+    if payload.category is not None: item.category = payload.category
+    if payload.price is not None: item.price = payload.price
+    if payload.is_available is not None: item.is_available = payload.is_available
+    if payload.description is not None: item.description = payload.description
+    if payload.variants is not None: item.variants = payload.variants
+    if payload.addons is not None: item.addons = payload.addons
+    db.commit()
+    db.refresh(item)
+    return item
+
+@router.delete(
+    "/menu/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a menu item"
+)
+def delete_menu_item(
+    item_id: UUID,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    item = db.query(MenuItem).filter(MenuItem.id == item_id, MenuItem.business_id == current_business.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    db.delete(item)
+    db.commit()
+    return None
+
+@router.get(
+    "/categories",
+    response_model=List[MenuCategoryResponse],
+    summary="List all menu categories"
+)
+def list_categories(
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    cats = (
+        db.query(MenuCategory)
+        .filter(MenuCategory.business_id == current_business.id)
+        .order_by(MenuCategory.display_order.asc(), MenuCategory.name.asc())
+        .all()
+    )
+    return cats
+
+@router.post(
+    "/categories",
+    response_model=MenuCategoryResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a menu category"
+)
+def create_category(
+    payload: MenuCategoryCreateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    existing = db.query(MenuCategory).filter(
+        MenuCategory.business_id == current_business.id,
+        MenuCategory.name.ilike(payload.name.strip())
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Category already exists")
+    new_cat = MenuCategory(
+        business_id=current_business.id,
+        name=payload.name.strip(),
+        description=payload.description.strip() if payload.description else None,
+        display_order=payload.display_order or 0
+    )
+    db.add(new_cat)
+    db.commit()
+    db.refresh(new_cat)
+    return new_cat
+
+@router.delete(
+    "/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a menu category"
+)
+def delete_category(
+    category_id: UUID,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    cat = db.query(MenuCategory).filter(
+        MenuCategory.id == category_id,
+        MenuCategory.business_id == current_business.id
+    ).first()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    db.delete(cat)
+    db.commit()
+    return None
 
 @router.get(
     "/menu",
@@ -189,6 +311,14 @@ async def send_order_status_notification(order_id: UUID, new_status: str, busine
             "in_kitchen": (
                 f"👨‍🍳 *Update from {business.name}*\n"
                 f"Aapka order *#{order.order_number}* kitchen mein prepare ho raha hai!\n"
+                f"⏱️ Estimated cooking time: 20 minutes\n"
+                f"💰 Total: Rs. {float(order.total_amount):,.2f}\n"
+                f"Jaise hi ready hoga, hum aapko notify karenge!"
+            ),
+            "preparing": (
+                f"👨‍🍳 *Update from {business.name}*\n"
+                f"Aapka order *#{order.order_number}* kitchen mein prepare ho raha hai!\n"
+                f"⏱️ Estimated cooking time: 20 minutes\n"
                 f"💰 Total: Rs. {float(order.total_amount):,.2f}\n"
                 f"Jaise hi ready hoga, hum aapko notify karenge!"
             ),
@@ -197,9 +327,28 @@ async def send_order_status_notification(order_id: UUID, new_status: str, busine
                 f"Good news! Aapka order *#{order.order_number}* bilkul fresh tayyar ho chuka hai"
                 + (f" aur delivery ke liye ready hai (Address: {order.delivery_address})!" if order.order_type == "delivery" and order.delivery_address else " aur pickup ke liye counter par ready hai!")
             ),
+            "out_for_delivery": (
+                f"🛵 *Out for Delivery - {business.name}*\n"
+                f"Aapka order *#{order.order_number}* rider ke pass hai aur aapki location ki taraf rawana ho chuka hai!"
+            ),
+            "reached": (
+                f"📍 *Rider Reached - {business.name}*\n"
+                f"Rider aapki location par pohanch gaya hai aapka order *#{order.order_number}* lekar.\n"
+                f"Baraye meherbani rider se order receive kar lijiye!"
+            ),
+            "delivered": (
+                f"🎉 *Order Delivered - {business.name}*\n"
+                f"Aapka order *#{order.order_number}* deliver ho chuka hai.\n"
+                f"Humare restaurant se order karne ka shukriya! Enjoy your meal! ⭐"
+            ),
+            "picked_up": (
+                f"🎉 *Order Picked Up - {business.name}*\n"
+                f"Aapka order *#{order.order_number}* pickup kar liya gaya hai.\n"
+                f"Humare restaurant se order karne ka shukriya! Enjoy your meal! ⭐"
+            ),
             "completed": (
                 f"🎉 *Order Completed - {business.name}*\n"
-                f"Aapka order *#{order.order_number}* deliver / complete ho chuka hai.\n"
+                f"Aapka order *#{order.order_number}* complete ho chuka hai.\n"
                 f"Humare restaurant se order karne ka shukriya! Enjoy your meal! ⭐"
             ),
             "cancelled": (
@@ -305,6 +454,63 @@ async def send_order_status_notification(order_id: UUID, new_status: str, busine
         db.close()
 
 
+def authenticate_staff_by_pin(slug: str, pin: str, db: Session, screen_type: str = "kitchen") -> Business:
+    clean_slug = slug.strip().lower()
+    business = db.query(Business).filter(
+        (Business.slug.ilike(clean_slug)) | (Business.name.ilike(clean_slug))
+    ).first()
+    if not business:
+        raise HTTPException(status_code=404, detail=f"Restaurant '{slug}' not found")
+
+    pin_entered = pin.strip()
+    st = screen_type.lower()
+    if st == "rider":
+        expected_pin = (getattr(business, "rider_pin", None) or "1234").strip()
+    elif st == "pos":
+        expected_pin = (getattr(business, "pos_pin", None) or "1234").strip()
+    else:
+        expected_pin = (business.kitchen_pin or "1234").strip()
+
+    # Allow screen's specific PIN or master kitchen_pin as fallback
+    if pin_entered != expected_pin and pin_entered != (business.kitchen_pin or "1234").strip():
+        raise HTTPException(status_code=401, detail=f"Invalid {screen_type.upper()} PIN")
+    return business
+
+
+def check_cooking_timers(
+    orders: List[RestaurantOrder],
+    db: Session,
+    background_tasks: Optional[BackgroundTasks] = None,
+    business_id: Optional[UUID] = None
+):
+    """
+    Auto-advances preparing / in_kitchen orders to 'ready' once 20 minutes have elapsed.
+    """
+    now = datetime.now(timezone.utc)
+    changed = False
+    for order in orders:
+        if order.status in ["preparing", "in_kitchen"] and order.cooking_started_at:
+            c_time = order.cooking_started_at
+            if c_time.tzinfo is None:
+                c_time = c_time.replace(tzinfo=timezone.utc)
+            elapsed_seconds = (now - c_time).total_seconds()
+            if elapsed_seconds >= 20 * 60:  # 20 minutes
+                order.status = "ready"
+                changed = True
+                if background_tasks and business_id:
+                    background_tasks.add_task(
+                        send_order_status_notification,
+                        order.id,
+                        "ready",
+                        business_id
+                    )
+    if changed:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+
 @router.get(
     "/orders",
     response_model=List[RestaurantOrderResponse],
@@ -312,6 +518,7 @@ async def send_order_status_notification(order_id: UUID, new_status: str, busine
 )
 def list_orders(
     status: Optional[str] = None,
+    background_tasks: BackgroundTasks = None,
     current_business: Business = Depends(get_current_restaurant),
     db: Session = Depends(get_db)
 ):
@@ -319,6 +526,7 @@ def list_orders(
     if status and status.strip() and status != "all":
         query = query.filter(RestaurantOrder.status == status.strip())
     orders = query.order_by(RestaurantOrder.created_at.desc()).all()
+    check_cooking_timers(orders, db, background_tasks, current_business.id)
     return orders
 
 
@@ -358,6 +566,10 @@ def create_manual_order(
         price = item.get("price", 0.0)
         total_bill += float(price) * float(qty)
 
+    del_fee = (getattr(current_business, "delivery_charges", 0.0) or 0.0) if (payload.order_type == "delivery") else 0.0
+    svc_fee = getattr(current_business, "service_charges", 0.0) or 0.0
+    total_bill += del_fee + svc_fee
+
     ord_num = f"ORD-{random.randint(1000, 9999)}"
     new_order = RestaurantOrder(
         business_id=current_business.id,
@@ -365,6 +577,7 @@ def create_manual_order(
         customer_name=payload.customer_name.strip(),
         customer_phone=payload.customer_phone.strip(),
         order_type=payload.order_type,
+        table_number=payload.table_number.strip() if payload.table_number else None,
         delivery_address=payload.delivery_address.strip() if payload.delivery_address else None,
         items=payload.items,
         total_amount=round(total_bill, 2),
@@ -376,6 +589,52 @@ def create_manual_order(
     db.commit()
     db.refresh(new_order)
     return new_order
+
+
+@router.put(
+    "/orders/{order_id}",
+    response_model=RestaurantOrderResponse,
+    summary="Update full order details (mistakes, items, address, customer details)"
+)
+def update_full_order(
+    order_id: UUID,
+    payload: RestaurantOrderUpdateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    order = db.query(RestaurantOrder).filter(
+        RestaurantOrder.id == order_id,
+        RestaurantOrder.business_id == current_business.id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if payload.customer_name is not None:
+        order.customer_name = payload.customer_name.strip()
+    if payload.customer_phone is not None:
+        order.customer_phone = payload.customer_phone.strip()
+    if payload.order_type is not None:
+        order.order_type = payload.order_type
+    if payload.table_number is not None:
+        order.table_number = payload.table_number.strip() if payload.table_number else None
+    if payload.delivery_address is not None:
+        order.delivery_address = payload.delivery_address.strip() if payload.delivery_address else None
+    if payload.special_instructions is not None:
+        order.special_instructions = payload.special_instructions.strip() if payload.special_instructions else None
+    if payload.items is not None:
+        order.items = payload.items
+        total_bill = 0.0
+        for item in payload.items:
+            qty = item.get("quantity", 1)
+            price = item.get("price", 0.0)
+            total_bill += float(price) * float(qty)
+        order.total_amount = round(total_bill, 2)
+    if payload.status is not None:
+        order.status = payload.status
+
+    db.commit()
+    db.refresh(order)
+    return order
 
 
 @router.patch(
@@ -402,6 +661,10 @@ def update_order_status(
 
     previous_status = order.status
     order.status = payload.status
+    if payload.status in ["preparing", "in_kitchen"] and not order.cooking_started_at:
+        order.cooking_started_at = datetime.now(timezone.utc)
+    if payload.rider_name:
+        order.rider_name = payload.rider_name.strip()
     db.commit()
     db.refresh(order)
 
@@ -414,4 +677,490 @@ def update_order_status(
             current_business.id
         )
 
+    return order
+
+
+# ==================== RESTAURANT GENERAL SETTINGS ====================
+
+@router.get(
+    "/settings",
+    response_model=RestaurantSettingsResponse,
+    summary="Get restaurant general settings (name, slug, delivery & service charges)"
+)
+def get_restaurant_settings(
+    current_business: Business = Depends(get_current_restaurant)
+):
+    return {
+        "name": current_business.name,
+        "slug": current_business.slug,
+        "delivery_charges": getattr(current_business, "delivery_charges", 0.0) or 0.0,
+        "service_charges": getattr(current_business, "service_charges", 0.0) or 0.0,
+    }
+
+
+@router.patch(
+    "/settings",
+    response_model=RestaurantSettingsResponse,
+    summary="Update restaurant general settings (name, delivery & service charges)"
+)
+def update_restaurant_settings(
+    payload: RestaurantSettingsUpdateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    if payload.name is not None and payload.name.strip():
+        current_business.name = payload.name.strip()
+    if payload.delivery_charges is not None:
+        current_business.delivery_charges = float(payload.delivery_charges)
+    if payload.service_charges is not None:
+        current_business.service_charges = float(payload.service_charges)
+
+    db.commit()
+    db.refresh(current_business)
+    return {
+        "name": current_business.name,
+        "slug": current_business.slug,
+        "delivery_charges": current_business.delivery_charges or 0.0,
+        "service_charges": current_business.service_charges or 0.0,
+    }
+
+
+# ==================== OPERATIONAL SCREENS & PINS (KDS, RIDER, POS) ====================
+
+@router.get(
+    "/settings/screen-pins",
+    response_model=ScreenPinsResponse,
+    summary="Get current PINs for all operational screens (Kitchen, Rider, POS)"
+)
+def get_screen_pins(
+    current_business: Business = Depends(get_current_restaurant)
+):
+    return {
+        "kitchen_pin": current_business.kitchen_pin or "1234",
+        "rider_pin": getattr(current_business, "rider_pin", None) or "1234",
+        "pos_pin": getattr(current_business, "pos_pin", None) or "1234",
+        "slug": current_business.slug,
+        "business_name": current_business.name
+    }
+
+
+@router.post(
+    "/settings/screen-pins",
+    response_model=ScreenPinsResponse,
+    summary="Update or generate PINs for all operational screens (Kitchen, Rider, POS)"
+)
+def update_screen_pins(
+    payload: ScreenPinsUpdateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    if payload.kitchen_pin is not None:
+        current_business.kitchen_pin = payload.kitchen_pin.strip()
+    if payload.rider_pin is not None:
+        current_business.rider_pin = payload.rider_pin.strip()
+    if payload.pos_pin is not None:
+        current_business.pos_pin = payload.pos_pin.strip()
+    db.commit()
+    db.refresh(current_business)
+    return {
+        "kitchen_pin": current_business.kitchen_pin or "1234",
+        "rider_pin": current_business.rider_pin or "1234",
+        "pos_pin": current_business.pos_pin or "1234",
+        "slug": current_business.slug,
+        "business_name": current_business.name
+    }
+
+
+@router.get(
+    "/settings/kitchen-pin",
+    summary="Get current kitchen display PIN"
+)
+def get_kitchen_pin(
+    current_business: Business = Depends(get_current_restaurant)
+):
+    return {
+        "kitchen_pin": current_business.kitchen_pin or "1234",
+        "rider_pin": getattr(current_business, "rider_pin", None) or "1234",
+        "pos_pin": getattr(current_business, "pos_pin", None) or "1234",
+        "slug": current_business.slug,
+        "business_name": current_business.name
+    }
+
+@router.post(
+    "/settings/kitchen-pin",
+    summary="Update kitchen display PIN"
+)
+def update_kitchen_pin(
+    payload: KitchenPinUpdateRequest,
+    current_business: Business = Depends(get_current_restaurant),
+    db: Session = Depends(get_db)
+):
+    current_business.kitchen_pin = payload.pin.strip()
+    db.commit()
+    return {"message": "Kitchen PIN updated successfully", "kitchen_pin": current_business.kitchen_pin}
+
+@router.post(
+    "/kitchen/verify",
+    summary="Verify PIN for operational screens (Kitchen, Rider, POS)"
+)
+def verify_kitchen_pin(
+    payload: KitchenVerifyRequest,
+    db: Session = Depends(get_db)
+):
+    screen_type = (payload.screen_type or "kitchen").lower()
+    business = authenticate_staff_by_pin(payload.slug, payload.pin, db, screen_type=screen_type)
+    token = create_access_token(data={"sub": str(business.id), "business_id": str(business.id)})
+    return {
+        "success": True,
+        "business_id": str(business.id),
+        "business_name": business.name,
+        "slug": business.slug or payload.slug.strip().lower(),
+        "delivery_charges": getattr(business, "delivery_charges", 0.0) or 0.0,
+        "service_charges": getattr(business, "service_charges", 0.0) or 0.0,
+        "token": token
+    }
+
+@router.get(
+    "/kitchen/orders",
+    response_model=List[RestaurantOrderResponse],
+    summary="List orders for Kitchen Display System (KDS)"
+)
+def get_kitchen_orders(
+    slug: str,
+    pin: str,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="kitchen")
+    orders = (
+        db.query(RestaurantOrder)
+        .filter(RestaurantOrder.business_id == business.id)
+        .order_by(RestaurantOrder.created_at.desc())
+        .all()
+    )
+    check_cooking_timers(orders, db, background_tasks, business.id)
+    return orders
+
+@router.patch(
+    "/kitchen/orders/{order_id}/status",
+    response_model=RestaurantOrderResponse,
+    summary="Bump or update order status from Kitchen Display System"
+)
+def update_kitchen_order_status(
+    order_id: UUID,
+    slug: str,
+    pin: str,
+    payload: RestaurantOrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="kitchen")
+    order = db.query(RestaurantOrder).filter(
+        RestaurantOrder.id == order_id,
+        RestaurantOrder.business_id == business.id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    previous_status = order.status
+    order.status = payload.status
+    if payload.status in ["preparing", "in_kitchen"] and not order.cooking_started_at:
+        order.cooking_started_at = datetime.now(timezone.utc)
+    if payload.rider_name:
+        order.rider_name = payload.rider_name.strip()
+    db.commit()
+    db.refresh(order)
+
+    if previous_status != payload.status:
+        background_tasks.add_task(
+            send_order_status_notification,
+            order.id,
+            payload.status,
+            business.id
+        )
+
+    return order
+
+
+# ==================== RIDER PORTAL (MOBILE-FIRST) ====================
+
+@router.get(
+    "/rider/orders",
+    response_model=List[RestaurantOrderResponse],
+    summary="List delivery orders for Rider Delivery Portal"
+)
+def get_rider_orders(
+    slug: str,
+    pin: str,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="rider")
+    orders = (
+        db.query(RestaurantOrder)
+        .filter(
+            RestaurantOrder.business_id == business.id,
+            RestaurantOrder.order_type == "delivery"
+        )
+        .order_by(RestaurantOrder.created_at.desc())
+        .all()
+    )
+    check_cooking_timers(orders, db, background_tasks, business.id)
+    return orders
+
+
+@router.patch(
+    "/rider/orders/{order_id}/status",
+    response_model=RestaurantOrderResponse,
+    summary="Update delivery order status from Rider Portal (reached or delivered)"
+)
+def update_rider_order_status(
+    order_id: UUID,
+    slug: str,
+    pin: str,
+    payload: RiderOrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="rider")
+    order = db.query(RestaurantOrder).filter(
+        RestaurantOrder.id == order_id,
+        RestaurantOrder.business_id == business.id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.order_type != "delivery":
+        raise HTTPException(status_code=400, detail="Only delivery orders can be managed by rider")
+
+    # Rider is explicitly restricted to setting reached or delivered (or out_for_delivery)
+    if payload.status not in ["reached", "delivered", "out_for_delivery"]:
+        raise HTTPException(status_code=400, detail="Rider can only set status to reached or delivered")
+
+    previous_status = order.status
+    order.status = payload.status
+    if payload.rider_name:
+        order.rider_name = payload.rider_name.strip()
+    db.commit()
+    db.refresh(order)
+
+    if previous_status != payload.status:
+        background_tasks.add_task(
+            send_order_status_notification,
+            order.id,
+            payload.status,
+            business.id
+        )
+
+    return order
+
+
+# ==================== POS ORDER TAKING TERMINAL ====================
+
+@router.get(
+    "/pos/menu",
+    summary="Get menu catalog and categories for POS screen"
+)
+def get_pos_menu(
+    slug: str,
+    pin: str,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="pos")
+    items = db.query(MenuItem).filter(MenuItem.business_id == business.id).all()
+    categories = (
+        db.query(MenuCategory)
+        .filter(MenuCategory.business_id == business.id, MenuCategory.is_active == True)
+        .order_by(MenuCategory.display_order.asc(), MenuCategory.name.asc())
+        .all()
+    )
+    return {
+        "business_name": business.name,
+        "slug": business.slug,
+        "items": [
+            {
+                "id": str(i.id),
+                "name": i.name,
+                "category": i.category,
+                "price": float(i.price),
+                "is_available": i.is_available,
+                "description": i.description,
+                "variants": i.variants or [],
+                "addons": i.addons or []
+            }
+            for i in items
+        ],
+        "categories": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "description": c.description,
+                "display_order": c.display_order
+            }
+            for c in categories
+        ]
+    }
+
+
+@router.post(
+    "/pos/orders",
+    response_model=RestaurantOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create order from POS screen (pickup by default, or delivery/dine-in)"
+)
+def create_pos_order(
+    slug: str,
+    pin: str,
+    payload: RestaurantOrderCreateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="pos")
+    total_bill = 0.0
+    for item in payload.items:
+        qty = item.get("quantity", 1)
+        price = item.get("price", 0.0)
+        total_bill += float(price) * float(qty)
+
+    del_fee = (getattr(business, "delivery_charges", 0.0) or 0.0) if (payload.order_type == "delivery") else 0.0
+    svc_fee = getattr(business, "service_charges", 0.0) or 0.0
+    total_bill += del_fee + svc_fee
+
+    ord_num = f"POS-{random.randint(1000, 9999)}"
+    new_order = RestaurantOrder(
+        business_id=business.id,
+        order_number=ord_num,
+        customer_name=payload.customer_name.strip(),
+        customer_phone=payload.customer_phone.strip(),
+        order_type=payload.order_type or "pickup",
+        table_number=payload.table_number.strip() if payload.table_number else None,
+        delivery_address=payload.delivery_address.strip() if payload.delivery_address else None,
+        items=payload.items,
+        total_amount=round(total_bill, 2),
+        status="received",
+        special_instructions=payload.special_instructions.strip() if payload.special_instructions else None,
+        channel="pos"
+    )
+    db.add(new_order)
+    db.commit()
+    db.refresh(new_order)
+
+    # Automatically notify customer via WhatsApp if valid phone provided
+    background_tasks.add_task(
+        send_order_status_notification,
+        new_order.id,
+        "in_kitchen",
+        business.id
+    )
+
+    return new_order
+
+
+@router.get(
+    "/pos/orders",
+    response_model=List[RestaurantOrderResponse],
+    summary="List all orders for POS screen review"
+)
+def get_pos_orders(
+    slug: str,
+    pin: str,
+    status: Optional[str] = None,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="pos")
+    query = db.query(RestaurantOrder).filter(RestaurantOrder.business_id == business.id)
+    if status and status.strip() and status != "all":
+        query = query.filter(RestaurantOrder.status == status.strip())
+    orders = query.order_by(RestaurantOrder.created_at.desc()).all()
+    check_cooking_timers(orders, db, background_tasks, business.id)
+    return orders
+
+
+@router.patch(
+    "/pos/orders/{order_id}/status",
+    response_model=RestaurantOrderResponse,
+    summary="Update order status from POS screen"
+)
+def update_pos_order_status(
+    order_id: UUID,
+    slug: str,
+    pin: str,
+    payload: RestaurantOrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="pos")
+    order = db.query(RestaurantOrder).filter(
+        RestaurantOrder.id == order_id,
+        RestaurantOrder.business_id == business.id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    previous_status = order.status
+    order.status = payload.status
+    if payload.status in ["preparing", "in_kitchen"] and not order.cooking_started_at:
+        order.cooking_started_at = datetime.now(timezone.utc)
+    if payload.rider_name:
+        order.rider_name = payload.rider_name.strip()
+    db.commit()
+    db.refresh(order)
+
+    if previous_status != payload.status:
+        background_tasks.add_task(
+            send_order_status_notification,
+            order.id,
+            payload.status,
+            business.id
+        )
+
+    return order
+
+
+@router.put(
+    "/pos/orders/{order_id}",
+    response_model=RestaurantOrderResponse,
+    summary="Update full order details from POS terminal"
+)
+def update_pos_full_order(
+    order_id: UUID,
+    slug: str,
+    pin: str,
+    payload: RestaurantOrderUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    business = authenticate_staff_by_pin(slug, pin, db, screen_type="pos")
+    order = db.query(RestaurantOrder).filter(
+        RestaurantOrder.id == order_id,
+        RestaurantOrder.business_id == business.id
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if payload.customer_name is not None:
+        order.customer_name = payload.customer_name.strip()
+    if payload.customer_phone is not None:
+        order.customer_phone = payload.customer_phone.strip()
+    if payload.order_type is not None:
+        order.order_type = payload.order_type
+    if payload.table_number is not None:
+        order.table_number = payload.table_number.strip() if payload.table_number else None
+    if payload.delivery_address is not None:
+        order.delivery_address = payload.delivery_address.strip() if payload.delivery_address else None
+    if payload.special_instructions is not None:
+        order.special_instructions = payload.special_instructions.strip() if payload.special_instructions else None
+    if payload.items is not None:
+        order.items = payload.items
+        total_bill = 0.0
+        for item in payload.items:
+            qty = item.get("quantity", 1)
+            price = item.get("price", 0.0)
+            total_bill += float(price) * float(qty)
+        order.total_amount = round(total_bill, 2)
+    if payload.status is not None:
+        order.status = payload.status
+
+    db.commit()
+    db.refresh(order)
     return order

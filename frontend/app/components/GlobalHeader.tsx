@@ -8,13 +8,16 @@ import ThemeToggle from "./ThemeToggle";
 export default function GlobalHeader() {
   const pathname = usePathname();
 
-  // Hide the global top navigation bar on dedicated dashboard pages
-  const isDashboard =
+  // Hide the global top navigation bar on dedicated operational and dashboard pages
+  const isDedicatedScreen =
     pathname.startsWith("/clinic") ||
     pathname.startsWith("/restaurant") ||
-    pathname.startsWith("/admin");
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/kitchen") ||
+    pathname.startsWith("/rider") ||
+    pathname.startsWith("/pos");
 
-  if (isDashboard) {
+  if (isDedicatedScreen) {
     return null;
   }
 
@@ -29,10 +32,10 @@ export default function GlobalHeader() {
           </div>
           <div>
             <span className="font-bold text-lg tracking-tight text-[#141413] dark:text-[#FAF9F5]">
-              VoiceReceptionist
+              AI Business Management
             </span>
             <span className="text-[10px] uppercase tracking-wider block font-semibold text-[#D97757] -mt-1">
-              AI Voice &amp; Booking Platform
+              Autonomous Operations Platform
             </span>
           </div>
         </Link>
@@ -56,12 +59,6 @@ export default function GlobalHeader() {
             className="hidden sm:inline-flex px-3 py-1.5 text-xs sm:text-sm font-medium text-[#5E5D59] hover:text-[#141413] dark:text-[#B0AEA5] dark:hover:text-[#FAF9F5] rounded-lg hover:bg-[#E8E6DC]/50 dark:hover:bg-[#3D3D3A]/60 transition-colors"
           >
             Pricing
-          </Link>
-          <Link
-            href="/#demo"
-            className="hidden sm:inline-flex px-3 py-1.5 text-xs sm:text-sm font-medium text-[#D97757] hover:text-[#C6613F] rounded-lg hover:bg-[#D97757]/10 transition-colors"
-          >
-            Live Demo
           </Link>
           
           <div className="h-4 w-[1px] bg-[#E8E6DC] dark:bg-[#3D3D3A] mx-1 hidden sm:block" />

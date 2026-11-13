@@ -2,22 +2,36 @@ export function getApiBase(): string {
   if (typeof window !== "undefined" && window.location.hostname) {
     const host = window.location.hostname;
     const proto = window.location.protocol;
-    // When running in browser on production domain or any reverse-proxied host
-    if (host !== "localhost" && host !== "127.0.0.1") {
+
+    // Check if user set an explicit override in localStorage
+    const override = localStorage.getItem("api_base_url");
+    if (override) return override.replace(/\/+$/, "");
+
+    // When running locally in browser (localhost or 127.0.0.1)
+    if (host === "localhost" || host === "127.0.0.1") {
       const envUrl = process.env.NEXT_PUBLIC_API_URL;
-      if (envUrl && !envUrl.includes("127.0.0.1") && !envUrl.includes("localhost")) {
+      // Only use NEXT_PUBLIC_API_URL if it explicitly points to localhost/127.0.0.1
+      if (envUrl && (envUrl.includes("localhost") || envUrl.includes("127.0.0.1"))) {
         return envUrl.replace(/\/+$/, "");
       }
-      return `${proto}//${host}`;
+      // Default local development backend is port 8000
+      return "http://localhost:8000";
     }
+
+    // When running on production domain (e.g. receptionist.helpexai.com or reverse-proxied host)
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && !envUrl.includes("127.0.0.1") && !envUrl.includes("localhost")) {
+      return envUrl.replace(/\/+$/, "");
+    }
+    return `${proto}//${host}`;
   }
-  return process.env.NEXT_PUBLIC_API_URL || "https://receptionist.helpexai.com";
+  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 }
 
 export const API_BASE =
   typeof window !== "undefined"
     ? getApiBase()
-    : (process.env.NEXT_PUBLIC_API_URL || "https://receptionist.helpexai.com");
+    : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000");
 
 export class ApiError extends Error {
   status: number;
@@ -418,13 +432,36 @@ export async function getClinicAppointments(): Promise<ClinicAppointment[]> {
 
 // ==================== RESTAURANT API ====================
 
+export interface MenuItemVariant {
+  name: string;
+  price: number;
+}
+
+export interface MenuItemAddon {
+  name: string;
+  price: number;
+}
+
 export interface MenuItem {
   id: string;
   business_id: string;
   name: string;
   category: string;
+  description?: string | null;
   price: number;
   is_available: boolean;
+  variants?: MenuItemVariant[];
+  addons?: MenuItemAddon[];
+}
+
+export interface MenuCategory {
+  id: string;
+  business_id: string;
+  name: string;
+  description?: string | null;
+  display_order: number;
+  is_active: boolean;
+  created_at?: string;
 }
 
 export interface RestaurantTable {
@@ -445,6 +482,8 @@ export interface RestaurantReservation {
   order_items: {
     item_id?: string;
     name: string;
+    variant?: string;
+    addons?: string[];
     price?: number;
     quantity: number;
     subtotal?: number;
@@ -460,7 +499,10 @@ export async function createRestaurantMenuItem(payload: {
   name: string;
   category: string;
   price: number;
+  description?: string;
   is_available?: boolean;
+  variants?: MenuItemVariant[];
+  addons?: MenuItemAddon[];
 }): Promise<MenuItem> {
   return fetchApi<MenuItem>("/api/restaurant/menu", {
     method: "POST",
@@ -468,10 +510,55 @@ export async function createRestaurantMenuItem(payload: {
   });
 }
 
+export async function updateRestaurantMenuItem(
+  itemId: string,
+  payload: Partial<{
+    name: string;
+    category: string;
+    description: string;
+    price: number;
+    is_available: boolean;
+    variants: MenuItemVariant[];
+    addons: MenuItemAddon[];
+  }>
+): Promise<MenuItem> {
+  return fetchApi<MenuItem>(`/api/restaurant/menu/${itemId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRestaurantMenuItem(itemId: string): Promise<void> {
+  return fetchApi<void>(`/api/restaurant/menu/${itemId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function toggleMenuItemAvailability(itemId: string, isAvailable?: boolean): Promise<MenuItem> {
   return fetchApi<MenuItem>(`/api/restaurant/menu/${itemId}/availability`, {
     method: "PUT",
     body: JSON.stringify(isAvailable !== undefined ? { is_available: isAvailable } : {}),
+  });
+}
+
+export async function getRestaurantCategories(): Promise<MenuCategory[]> {
+  return fetchApi<MenuCategory[]>("/api/restaurant/categories");
+}
+
+export async function createRestaurantCategory(payload: {
+  name: string;
+  description?: string;
+  display_order?: number;
+}): Promise<MenuCategory> {
+  return fetchApi<MenuCategory>("/api/restaurant/categories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteRestaurantCategory(categoryId: string): Promise<void> {
+  return fetchApi<void>(`/api/restaurant/categories/${categoryId}`, {
+    method: "DELETE",
   });
 }
 
@@ -496,6 +583,8 @@ export async function getRestaurantReservations(): Promise<RestaurantReservation
 export interface RestaurantOrderItem {
   item_id?: string;
   name: string;
+  variant?: string;
+  addons?: string[];
   price: number;
   quantity: number;
   subtotal: number;
@@ -509,10 +598,25 @@ export interface RestaurantOrder {
   customer_name: string;
   customer_phone: string;
   order_type: "delivery" | "pickup" | "dine_in";
+  table_number?: string | null;
   delivery_address?: string | null;
   items: RestaurantOrderItem[];
   total_amount: number;
-  status: "received" | "in_kitchen" | "ready" | "completed" | "cancelled";
+  status:
+    | "received"
+    | "confirmed"
+    | "in_kitchen"
+    | "preparing"
+    | "ready"
+    | "out_for_delivery"
+    | "reached"
+    | "delivered"
+    | "picked_up"
+    | "completed"
+    | "cancelled";
+  cooking_started_at?: string | null;
+  rider_name?: string | null;
+  rider_phone?: string | null;
   special_instructions?: string | null;
   channel?: string;
   created_at: string;
@@ -526,11 +630,308 @@ export async function getRestaurantOrders(status?: string): Promise<RestaurantOr
 
 export async function updateRestaurantOrderStatus(
   orderId: string,
-  newStatus: "received" | "in_kitchen" | "ready" | "completed" | "cancelled"
+  newStatus:
+    | "received"
+    | "in_kitchen"
+    | "preparing"
+    | "ready"
+    | "out_for_delivery"
+    | "reached"
+    | "delivered"
+    | "picked_up"
+    | "completed"
+    | "cancelled",
+  riderName?: string
 ): Promise<RestaurantOrder> {
   return fetchApi<RestaurantOrder>(`/api/restaurant/orders/${orderId}/status`, {
     method: "PATCH",
-    body: JSON.stringify({ status: newStatus }),
+    body: JSON.stringify({ status: newStatus, rider_name: riderName }),
+  });
+}
+
+export interface ScreenPinsData {
+  kitchen_pin: string;
+  rider_pin: string;
+  pos_pin: string;
+  slug?: string;
+  business_name?: string;
+}
+
+export async function getScreenPins(): Promise<ScreenPinsData> {
+  return fetchApi<ScreenPinsData>("/api/restaurant/settings/screen-pins");
+}
+
+export async function updateScreenPins(payload: {
+  kitchen_pin?: string;
+  rider_pin?: string;
+  pos_pin?: string;
+}): Promise<ScreenPinsData> {
+  return fetchApi<ScreenPinsData>("/api/restaurant/settings/screen-pins", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface RestaurantSettingsData {
+  name: string;
+  slug?: string;
+  delivery_charges: number;
+  service_charges: number;
+}
+
+export async function getRestaurantSettings(): Promise<RestaurantSettingsData> {
+  return fetchApi<RestaurantSettingsData>("/api/restaurant/settings");
+}
+
+export async function updateRestaurantSettings(payload: {
+  name?: string;
+  delivery_charges?: number;
+  service_charges?: number;
+}): Promise<RestaurantSettingsData> {
+  return fetchApi<RestaurantSettingsData>("/api/restaurant/settings", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getKitchenPin(): Promise<{ kitchen_pin: string; slug?: string; business_name?: string }> {
+  return fetchApi<{ kitchen_pin: string; slug?: string; business_name?: string }>("/api/restaurant/settings/kitchen-pin");
+}
+
+export async function updateKitchenPin(pin: string): Promise<{ message: string; kitchen_pin: string }> {
+  return fetchApi<{ message: string; kitchen_pin: string }>("/api/restaurant/settings/kitchen-pin", {
+    method: "POST",
+    body: JSON.stringify({ pin }),
+  });
+}
+
+export async function verifyKitchenPin(
+  pin: string,
+  slug: string,
+  screenType?: "kitchen" | "rider" | "pos"
+): Promise<{
+  success: boolean;
+  business_id: string;
+  business_name: string;
+  slug: string;
+  delivery_charges?: number;
+  service_charges?: number;
+  token?: string;
+}> {
+  return fetchApi<{
+    success: boolean;
+    business_id: string;
+    business_name: string;
+    slug: string;
+    delivery_charges?: number;
+    service_charges?: number;
+    token?: string;
+  }>(
+    "/api/restaurant/kitchen/verify",
+    {
+      method: "POST",
+      body: JSON.stringify({ pin, slug, screen_type: screenType || "kitchen" }),
+    }
+  );
+}
+
+export async function getKitchenOrders(slug: string, pin: string): Promise<RestaurantOrder[]> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder[]>(`/api/restaurant/kitchen/orders?${params.toString()}`);
+}
+
+export async function updateKitchenOrderStatus(
+  orderId: string,
+  slug: string,
+  pin: string,
+  status:
+    | "received"
+    | "in_kitchen"
+    | "preparing"
+    | "ready"
+    | "out_for_delivery"
+    | "reached"
+    | "delivered"
+    | "picked_up"
+    | "completed"
+    | "cancelled",
+  riderName?: string
+): Promise<RestaurantOrder> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder>(`/api/restaurant/kitchen/orders/${orderId}/status?${params.toString()}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, rider_name: riderName }),
+  });
+}
+
+// ==================== RIDER PORTAL API ====================
+
+export async function getRiderOrders(slug: string, pin: string): Promise<RestaurantOrder[]> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder[]>(`/api/restaurant/rider/orders?${params.toString()}`);
+}
+
+export async function updateRiderOrderStatus(
+  orderId: string,
+  slug: string,
+  pin: string,
+  status: "reached" | "delivered" | "out_for_delivery",
+  riderName?: string
+): Promise<RestaurantOrder> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder>(`/api/restaurant/rider/orders/${orderId}/status?${params.toString()}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, rider_name: riderName }),
+  });
+}
+
+// ==================== POS TERMINAL API ====================
+
+export interface PosMenuData {
+  business_name: string;
+  slug: string;
+  items: MenuItem[];
+  categories: MenuCategory[];
+}
+
+export async function getPosMenu(slug: string, pin: string): Promise<PosMenuData> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<PosMenuData>(`/api/restaurant/pos/menu?${params.toString()}`);
+}
+
+export async function createPosOrder(
+  slug: string,
+  pin: string,
+  payload: {
+    customer_name: string;
+    customer_phone: string;
+    order_type: "pickup" | "delivery" | "dine_in";
+    table_number?: string;
+    delivery_address?: string;
+    items: Array<{
+      item_id?: string;
+      name: string;
+      variant?: string;
+      addons?: string[];
+      price: number;
+      quantity: number;
+      subtotal: number;
+      notes?: string;
+    }>;
+    special_instructions?: string;
+  }
+): Promise<RestaurantOrder> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder>(`/api/restaurant/pos/orders?${params.toString()}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getPosOrders(slug: string, pin: string, status?: string): Promise<RestaurantOrder[]> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  if (status && status !== "all") {
+    params.set("status", status);
+  }
+  return fetchApi<RestaurantOrder[]>(`/api/restaurant/pos/orders?${params.toString()}`);
+}
+
+export async function updatePosOrderStatus(
+  orderId: string,
+  slug: string,
+  pin: string,
+  status:
+    | "received"
+    | "in_kitchen"
+    | "preparing"
+    | "ready"
+    | "out_for_delivery"
+    | "reached"
+    | "delivered"
+    | "picked_up"
+    | "completed"
+    | "cancelled"
+): Promise<RestaurantOrder> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder>(`/api/restaurant/pos/orders/${orderId}/status?${params.toString()}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function updatePosOrder(
+  orderId: string,
+  slug: string,
+  pin: string,
+  payload: {
+    customer_name?: string;
+    customer_phone?: string;
+    order_type?: "pickup" | "delivery" | "dine_in";
+    table_number?: string;
+    delivery_address?: string;
+    items?: Array<{
+      item_id?: string;
+      name: string;
+      variant?: string;
+      addons?: string[];
+      price: number;
+      quantity: number;
+      subtotal: number;
+      notes?: string;
+    }>;
+    special_instructions?: string;
+    status?: string;
+  }
+): Promise<RestaurantOrder> {
+  const params = new URLSearchParams();
+  params.set("slug", slug);
+  params.set("pin", pin);
+  return fetchApi<RestaurantOrder>(`/api/restaurant/pos/orders/${orderId}?${params.toString()}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRestaurantOrder(
+  orderId: string,
+  payload: {
+    customer_name?: string;
+    customer_phone?: string;
+    order_type?: "pickup" | "delivery" | "dine_in";
+    delivery_address?: string;
+    items?: Array<{
+      item_id?: string;
+      name: string;
+      variant?: string;
+      addons?: string[];
+      price: number;
+      quantity: number;
+      subtotal: number;
+      notes?: string;
+    }>;
+    special_instructions?: string;
+    status?: string;
+  }
+): Promise<RestaurantOrder> {
+  return fetchApi<RestaurantOrder>(`/api/restaurant/orders/${orderId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
   });
 }
 

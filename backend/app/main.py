@@ -60,12 +60,35 @@ async def lifespan(app: FastAPI):
                 ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS whatsapp_chat_id VARCHAR(100);
                 CREATE INDEX IF NOT EXISTS idx_restaurant_orders_wa_chat ON restaurant_orders(whatsapp_chat_id);
                 ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS whatsapp_session VARCHAR(100);
+                ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS cooking_started_at TIMESTAMP WITH TIME ZONE;
+                ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS rider_name VARCHAR(100);
+                ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS rider_phone VARCHAR(50);
+                ALTER TABLE restaurant_orders ADD COLUMN IF NOT EXISTS table_number VARCHAR(50);
 
                 ALTER TABLE clinic_appointments ADD COLUMN IF NOT EXISTS whatsapp_chat_id VARCHAR(100);
                 CREATE INDEX IF NOT EXISTS idx_clinic_appointments_wa_chat ON clinic_appointments(whatsapp_chat_id);
 
                 ALTER TABLE restaurant_reservations ADD COLUMN IF NOT EXISTS whatsapp_chat_id VARCHAR(100);
                 CREATE INDEX IF NOT EXISTS idx_restaurant_reservations_wa_chat ON restaurant_reservations(whatsapp_chat_id);
+
+                ALTER TABLE businesses ADD COLUMN IF NOT EXISTS kitchen_pin VARCHAR(20) DEFAULT '1234';
+                ALTER TABLE businesses ADD COLUMN IF NOT EXISTS rider_pin VARCHAR(20) DEFAULT '1234';
+                ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pos_pin VARCHAR(20) DEFAULT '1234';
+
+                ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS description TEXT;
+                ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS variants JSONB DEFAULT '[]'::jsonb;
+                ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS addons JSONB DEFAULT '[]'::jsonb;
+
+                CREATE TABLE IF NOT EXISTS menu_categories (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+                    name VARCHAR(100) NOT NULL,
+                    description TEXT,
+                    display_order INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_menu_categories_biz ON menu_categories(business_id);
             """))
             conn.commit()
     except Exception:
@@ -73,7 +96,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="Multi-Tenant AI Receptionist API",
+    title="AI Business Management Platform API",
     version="1.0.0",
     lifespan=lifespan
 )

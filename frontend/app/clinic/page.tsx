@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -15,8 +15,6 @@ import {
   AlertCircle,
   Phone,
   Search,
-  DollarSign,
-  Tag,
   Code2,
   Copy,
   Check,
@@ -25,24 +23,23 @@ import {
   Ban,
   Power,
   Pencil,
-  ChevronDown,
-  ChevronUp,
-  UserX,
-  UserCheck,
-  CalendarX,
-  Layers,
   X,
   ExternalLink,
   Eye,
-  User,
-  FileText,
   KeyRound,
   Lock,
   Menu,
   Shield,
   MessageSquare,
+  CalendarDays,
+  ChevronRight,
+  Bot,
+  Layers,
+  FileText,
+  Loader2,
 } from "lucide-react";
 import WhatsAppConnectCard from "@/src/components/WhatsAppConnectCard";
+import ConfirmationModal from "@/src/components/ConfirmationModal";
 import ThemeToggle from "../components/ThemeToggle";
 import {
   getAuth,
@@ -63,7 +60,6 @@ import {
   Doctor,
   DoctorSlot,
   ClinicAppointment,
-  API_BASE,
 } from "@/lib/api";
 
 const DAYS_OF_WEEK = [
@@ -79,7 +75,7 @@ const DAYS_OF_WEEK = [
 export default function ClinicDashboardPage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"appointments" | "doctors" | "slots" | "whatsapp" | "widget" | "security">("appointments");
-  const [tenantName, setTenantName] = useState<string>("Clinic");
+  const [tenantName, setTenantName] = useState<string>("MediSync Clinic");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Clinic Profile & Widget State
@@ -104,8 +100,37 @@ export default function ClinicDashboardPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
+  const [statusToast, setStatusToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null);
+  const [releasingSlotId, setReleasingSlotId] = useState<string | null>(null);
+  const [togglingSlotId, setTogglingSlotId] = useState<string | null>(null);
+  const [togglingDoctorId, setTogglingDoctorId] = useState<string | null>(null);
+
+  // Global Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message?: string;
+    details?: React.ReactNode;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    variant?: "danger" | "warning" | "success" | "primary" | "emerald" | "amber" | "cyan";
+    onConfirm: () => Promise<void> | void;
+    isLoading?: boolean;
+  }>({
+    isOpen: false,
+    title: "",
+    onConfirm: () => {},
+  });
+
+  const showToast = (msg: string, type: "success" | "error" = "success") => {
+    setStatusToast({ msg, type });
+    setTimeout(() => setStatusToast(null), 3500);
+  };
 
   // New Doctor Form State
+  const [isAddDoctorModalOpen, setIsAddDoctorModalOpen] = useState(false);
   const [docName, setDocName] = useState("");
   const [docSpecialty, setDocSpecialty] = useState("");
   const [docSymptoms, setDocSymptoms] = useState("");
@@ -114,6 +139,7 @@ export default function ClinicDashboardPage() {
   const [doctorSuccessMsg, setDoctorSuccessMsg] = useState<string | null>(null);
 
   // Single Slot Creator Form State
+  const [isSingleSlotModalOpen, setIsSingleSlotModalOpen] = useState(false);
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [slotDate, setSlotDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [slotStartTime, setSlotStartTime] = useState("09:00");
@@ -122,6 +148,7 @@ export default function ClinicDashboardPage() {
   const [slotSuccessMsg, setSlotSuccessMsg] = useState<string | null>(null);
 
   // Bulk Slot Creator Form State
+  const [isBulkSlotModalOpen, setIsBulkSlotModalOpen] = useState(false);
   const [bulkDoctorId, setBulkDoctorId] = useState("");
   const [bulkStartDate, setBulkStartDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [bulkEndDate, setBulkEndDate] = useState(() => {
@@ -134,36 +161,38 @@ export default function ClinicDashboardPage() {
   const [hasBreak, setHasBreak] = useState(true);
   const [breakStartTime, setBreakStartTime] = useState("13:00");
   const [breakEndTime, setBreakEndTime] = useState("14:00");
-  const [slotInterval, setSlotInterval] = useState<number>(15);
-  const [bulkDays, setBulkDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 0]);
+  const [slotInterval, setSlotInterval] = useState<number>(30);
+  const [bulkDays, setBulkDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [creatingBulkSlots, setCreatingBulkSlots] = useState(false);
   const [bulkSuccessMsg, setBulkSuccessMsg] = useState<string | null>(null);
 
   // Filters
   const [appointmentSearch, setAppointmentSearch] = useState("");
-  const [slotDoctorFilter, setSlotDoctorFilter] = useState("");
+  const [appointmentDoctorFilter, setAppointmentDoctorFilter] = useState<string>("all");
+  const [appointmentViewMode, setAppointmentViewMode] = useState<"cards" | "table">("cards");
 
-  // Doctor Details Modal State
+  const [slotDoctorFilter, setSlotDoctorFilter] = useState<string>("all");
+  const [slotDateFilter, setSlotDateFilter] = useState<string>("");
+  const [slotStatusFilter, setSlotStatusFilter] = useState<"all" | "available" | "booked" | "disabled">("all");
+
+  // Doctor Details / Edit Modal State
   const [selectedDoctorModal, setSelectedDoctorModal] = useState<Doctor | null>(null);
   const [isEditingDoctor, setIsEditingDoctor] = useState(false);
   const [editName, setEditName] = useState("");
   const [editSpecialty, setEditSpecialty] = useState("");
-  const [editFee, setEditFee] = useState(50);
   const [editSymptoms, setEditSymptoms] = useState("");
-  const [isSlotsCollapsed, setIsSlotsCollapsed] = useState(true);
+  const [editFee, setEditFee] = useState<number>(50);
   const [updatingDoctor, setUpdatingDoctor] = useState(false);
 
-  // Manual Booking Modal State
-  const [bookingSlotModal, setBookingSlotModal] = useState<DoctorSlot | null>(null);
-  const [bookPatientName, setBookPatientName] = useState("");
-  const [bookPatientPhone, setBookPatientPhone] = useState("");
-  const [bookSymptoms, setBookSymptoms] = useState("");
-  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
-  const [bookingModalError, setBookingModalError] = useState<string | null>(null);
+  // Slot Manual Booking Modal State
+  const [selectedSlotForBooking, setSelectedSlotForBooking] = useState<DoctorSlot | null>(null);
+  const [manualPatientName, setManualPatientName] = useState("");
+  const [manualPatientPhone, setManualPatientPhone] = useState("");
+  const [manualSymptoms, setManualSymptoms] = useState("");
+  const [bookingSlotLoading, setBookingSlotLoading] = useState(false);
 
-  // Appointment Details Modal State
+  // Appointment Details Modal
   const [selectedAppointmentModal, setSelectedAppointmentModal] = useState<ClinicAppointment | null>(null);
-  const [copiedPhone, setCopiedPhone] = useState(false);
 
   // Auth Guard
   useEffect(() => {
@@ -179,187 +208,180 @@ export default function ClinicDashboardPage() {
     if (auth.name) {
       setTenantName(auth.name);
     }
-    loadAllData();
-  }, []);
+  }, [router]);
 
-  const loadAllData = async () => {
-    setLoading(true);
+  // Load Dashboard Data
+  const loadDashboardData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    else setRefreshing(true);
     setError(null);
+
     try {
-      const [docsData, slotsData, apptsData, profData] = await Promise.all([
-        getClinicDoctors(),
-        getClinicSlots(),
-        getClinicAppointments(),
+      const [docsData, slotsData, apptsData, profileData] = await Promise.all([
+        getClinicDoctors().catch(() => []),
+        getClinicSlots().catch(() => []),
+        getClinicAppointments().catch(() => []),
         getProfile().catch(() => null),
       ]);
-      setDoctors(docsData);
-      setSlots(slotsData);
-      setAppointments(apptsData);
-      if (profData) {
-        setClinicProfile(profData);
-        if (profData.name) setTenantName(profData.name);
+
+      setDoctors(docsData || []);
+      setSlots(slotsData || []);
+      setAppointments(apptsData || []);
+      if (profileData) {
+        setClinicProfile(profileData);
+        if (profileData.business_name || profileData.name) {
+          setTenantName(profileData.business_name || profileData.name);
+        }
       }
-      if (docsData.length > 0 && !selectedDoctorId) {
-        setSelectedDoctorId(docsData[0].id);
-        setBulkDoctorId(docsData[0].id);
-      }
+      setLastRefreshedAt(new Date());
     } catch (err: any) {
-      setError(err.message || "Failed to load clinic dashboard records.");
+      setError(err?.message || "Failed to load clinic dashboard data");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setChangePasswordError(null);
-    setChangePasswordSuccess(null);
-    if (changePasswordNew !== changePasswordConfirm) {
-      setChangePasswordError("New password and confirm password do not match.");
-      return;
-    }
-    if (changePasswordNew.length < 6) {
-      setChangePasswordError("New password must be at least 6 characters.");
-      return;
-    }
-    setChangePasswordLoading(true);
-    try {
-      await changePassword(changePasswordCurrent, changePasswordNew);
-      setChangePasswordSuccess("Password successfully changed!");
-      setChangePasswordCurrent("");
-      setChangePasswordNew("");
-      setChangePasswordConfirm("");
-    } catch (err: any) {
-      setChangePasswordError(err.message || "Failed to update password.");
-    } finally {
-      setChangePasswordLoading(false);
-    }
-  };
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
 
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadAllData();
-  };
-
+  // Handle Logout
   const handleLogout = () => {
-    clearAuth();
-    router.push("/login");
+    setConfirmModal({
+      isOpen: true,
+      title: "Sign Out of Clinic Portal?",
+      message: "Are you sure you want to end your active clinic session?",
+      confirmLabel: "Yes, Sign Out",
+      variant: "danger",
+      onConfirm: () => {
+        clearAuth();
+        router.push("/login");
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+      },
+    });
   };
 
-  // Add Doctor Handler
+  // ==================== DOCTOR ACTIONS ====================
   const handleCreateDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!docName.trim() || !docSpecialty.trim()) return;
+
     setCreatingDoctor(true);
     setDoctorSuccessMsg(null);
-    setError(null);
-
-    const symptomsList = docSymptoms
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
     try {
-      const newDoc = await createClinicDoctor({
+      const created = await createClinicDoctor({
         name: docName.trim(),
         specialty: docSpecialty.trim(),
-        symptoms_treated: symptomsList,
-        fee: Number(docFee),
+        symptoms_treated: docSymptoms.split(",").map((s) => s.trim()).filter(Boolean),
+        fee: docFee,
       });
-      setDoctors((prev) => [...prev, newDoc]);
-      setDoctorSuccessMsg(`Dr. ${newDoc.name} registered successfully!`);
+      setDoctors((prev) => [...prev, created]);
       setDocName("");
       setDocSpecialty("");
       setDocSymptoms("");
       setDocFee(50);
-      if (!selectedDoctorId) setSelectedDoctorId(newDoc.id);
-      if (!bulkDoctorId) setBulkDoctorId(newDoc.id);
+      setDoctorSuccessMsg(`Dr. ${created.name} added successfully!`);
+      showToast(`Dr. ${created.name} added successfully!`);
+      setIsAddDoctorModalOpen(false);
+      setTimeout(() => setDoctorSuccessMsg(null), 4000);
     } catch (err: any) {
-      setError(err.message || "Could not register doctor.");
+      showToast(err?.message || "Failed to add doctor", "error");
     } finally {
       setCreatingDoctor(false);
     }
   };
 
-  // Single Slot Creation
-  const handleCreateSlot = async (e: React.FormEvent) => {
+  const handleToggleDoctorToday = async (doctor: Doctor) => {
+    setTogglingDoctorId(doctor.id);
+    try {
+      const updated = await toggleDoctorAvailabilityToday(doctor.id);
+      setDoctors((prev) =>
+        prev.map((d) => (d.id === doctor.id ? { ...d, is_available_today: updated.is_available_today } : d))
+      );
+      showToast(
+        `Dr. ${doctor.name} marked as ${updated.is_available_today ? "Available" : "Off Duty"}`
+      );
+    } catch (err: any) {
+      showToast(err?.message || "Failed to toggle doctor availability", "error");
+    } finally {
+      setTogglingDoctorId(null);
+    }
+  };
+
+  const openDoctorEditModal = (doctor: Doctor) => {
+    setSelectedDoctorModal(doctor);
+    setEditName(doctor.name);
+    setEditSpecialty(doctor.specialty);
+    setEditSymptoms((doctor.symptoms_treated || []).join(", "));
+    setEditFee(doctor.fee || 50);
+    setIsEditingDoctor(true);
+  };
+
+  const handleUpdateDoctor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDoctorModal || !editName.trim()) return;
+
+    setUpdatingDoctor(true);
+    try {
+      const updated = await updateClinicDoctor(selectedDoctorModal.id, {
+        name: editName.trim(),
+        specialty: editSpecialty.trim(),
+        fee: editFee,
+        symptoms_treated: editSymptoms.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      setDoctors((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setIsEditingDoctor(false);
+      setSelectedDoctorModal(null);
+      showToast(`Dr. ${updated.name} profile updated!`);
+    } catch (err: any) {
+      showToast(err?.message || "Failed to update doctor", "error");
+    } finally {
+      setUpdatingDoctor(false);
+    }
+  };
+
+  // ==================== SLOT ACTIONS ====================
+  const handleCreateSingleSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDoctorId) {
-      setError("Please select a doctor to add an appointment slot.");
+      showToast("Please select a physician", "error");
       return;
     }
     setCreatingSlot(true);
     setSlotSuccessMsg(null);
-    setError(null);
-
     try {
-      const formattedStart = slotStartTime.length === 5 ? `${slotStartTime}:00` : slotStartTime;
-      const formattedEnd = slotEndTime.length === 5 ? `${slotEndTime}:00` : slotEndTime;
-
-      const created = await createClinicSlots([
+      const createdSlots = await createClinicSlots([
         {
           doctor_id: selectedDoctorId,
           slot_date: slotDate,
-          start_time: formattedStart,
-          end_time: formattedEnd,
+          start_time: slotStartTime,
+          end_time: slotEndTime,
         },
       ]);
-      setSlots((prev) => [...created, ...prev]);
-      setSlotSuccessMsg("Appointment slot created successfully!");
+      setSlots((prev) => [...prev, ...createdSlots]);
+      setSlotSuccessMsg("Consultation slot created!");
+      showToast("Consultation slot created successfully!");
+      setIsSingleSlotModalOpen(false);
+      setTimeout(() => setSlotSuccessMsg(null), 3000);
     } catch (err: any) {
-      setError(err.message || "Failed to create slot.");
+      showToast(err?.message || "Failed to create slot", "error");
     } finally {
       setCreatingSlot(false);
     }
   };
 
-  // Bulk Slot Creation
   const handleCreateBulkSlots = async (e: React.FormEvent) => {
     e.preventDefault();
-    const docId = bulkDoctorId || selectedDoctorId;
-    if (!docId) {
-      setError("Please select a doctor for bulk slot creation.");
+    if (!bulkDoctorId) {
+      showToast("Please select a physician for batch generation", "error");
       return;
     }
-    if (bulkStartDate > bulkEndDate) {
-      setError("Start Date cannot be later than End Date.");
-      return;
-    }
-    if (bulkDays.length === 0) {
-      setError("Please select at least one day of the week.");
-      return;
-    }
-    if (bulkStartTime >= bulkEndTime) {
-      setError("Start Time must be earlier than End Time.");
-      return;
-    }
-    if (hasBreak && breakStartTime >= breakEndTime) {
-      setError("Break Start Time must be earlier than Break End Time.");
-      return;
-    }
-
     setCreatingBulkSlots(true);
     setBulkSuccessMsg(null);
-    setError(null);
 
     try {
-      const toMinutes = (t: string) => {
-        const [h, m] = t.split(":").map(Number);
-        return h * 60 + m;
-      };
-      const fromMinutes = (m: number) => {
-        const h = String(Math.floor(m / 60)).padStart(2, "0");
-        const min = String(m % 60).padStart(2, "0");
-        return `${h}:${min}:00`;
-      };
-
-      const startM = toMinutes(bulkStartTime);
-      const endM = toMinutes(bulkEndTime);
-      const breakStartM = hasBreak ? toMinutes(breakStartTime) : -1;
-      const breakEndM = hasBreak ? toMinutes(breakEndTime) : -1;
-
-      const slotsToCreate: { doctor_id: string; slot_date: string; start_time: string; end_time: string }[] = [];
-
+      const slotsToCreate: any[] = [];
       const start = new Date(bulkStartDate + "T00:00:00");
       const end = new Date(bulkEndDate + "T00:00:00");
 
@@ -367,253 +389,323 @@ export default function ClinicDashboardPage() {
         const dayOfWeek = d.getDay();
         if (!bulkDays.includes(dayOfWeek)) continue;
 
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        const dateStr = `${yyyy}-${mm}-${dd}`;
+        const dateStr = d.toISOString().split("T")[0];
 
-        for (let cur = startM; cur + slotInterval <= endM; cur += slotInterval) {
-          const next = cur + slotInterval;
-          // Check break overlap
-          if (hasBreak && Math.max(cur, breakStartM) < Math.min(next, breakEndM)) {
-            continue; // Skip slot inside break window
+        // Parse day time into minutes
+        const [startH, startM] = bulkStartTime.split(":").map(Number);
+        const [endH, endM] = bulkEndTime.split(":").map(Number);
+        const dayStartMin = startH * 60 + startM;
+        const dayEndMin = endH * 60 + endM;
+
+        let breakStartMin = 0;
+        let breakEndMin = 0;
+        if (hasBreak && breakStartTime && breakEndTime) {
+          const [bSH, bSM] = breakStartTime.split(":").map(Number);
+          const [bEH, bEM] = breakEndTime.split(":").map(Number);
+          breakStartMin = bSH * 60 + bSM;
+          breakEndMin = bEH * 60 + bEM;
+        }
+
+        let currMin = dayStartMin;
+        while (currMin + slotInterval <= dayEndMin) {
+          const nextMin = currMin + slotInterval;
+          // Skip if overlaps break
+          if (hasBreak && currMin < breakEndMin && nextMin > breakStartMin) {
+            currMin = breakEndMin;
+            continue;
           }
 
+          const pad = (n: number) => n.toString().padStart(2, "0");
+          const sTime = `${pad(Math.floor(currMin / 60))}:${pad(currMin % 60)}`;
+          const eTime = `${pad(Math.floor(nextMin / 60))}:${pad(nextMin % 60)}`;
+
           slotsToCreate.push({
-            doctor_id: docId,
+            doctor_id: bulkDoctorId,
             slot_date: dateStr,
-            start_time: fromMinutes(cur),
-            end_time: fromMinutes(next),
+            start_time: sTime,
+            end_time: eTime,
           });
+
+          currMin = nextMin;
         }
       }
 
       if (slotsToCreate.length === 0) {
-        setError("No slots match the specified hours, intervals, and weekdays.");
+        showToast("No valid slots matched your schedule and break parameters.", "error");
         setCreatingBulkSlots(false);
         return;
       }
 
       const created = await createClinicSlots(slotsToCreate);
-      setSlots((prev) => [...created, ...prev]);
-      setBulkSuccessMsg(`Successfully created ${created.length} slots across the selected date range!`);
+      setSlots((prev) => [...prev, ...created]);
+      setBulkSuccessMsg(`Successfully generated ${created.length} consultation slots!`);
+      showToast(`Generated ${created.length} consultation slots!`);
+      setIsBulkSlotModalOpen(false);
+      setTimeout(() => setBulkSuccessMsg(null), 4000);
     } catch (err: any) {
-      setError(err.message || "Failed to generate bulk slots.");
+      showToast(err?.message || "Failed to generate bulk slots", "error");
     } finally {
       setCreatingBulkSlots(false);
     }
   };
 
-  // Toggle Day Checkbox for Bulk Generation
-  const toggleBulkDay = (dayVal: number) => {
-    setBulkDays((prev) =>
-      prev.includes(dayVal) ? prev.filter((d) => d !== dayVal) : [...prev, dayVal]
-    );
+  const handleDeleteSlot = (slot: DoctorSlot) => {
+    const doc = doctors.find((d) => d.id === slot.doctor_id);
+    const docTitle = doc ? `Dr. ${doc.name}` : "Physician";
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Consultation Slot?",
+      message: `Are you sure you want to delete the slot for ${docTitle} on ${slot.slot_date} (${slot.start_time} - ${slot.end_time})?`,
+      confirmLabel: "Yes, Delete Slot",
+      variant: "danger",
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+        setDeletingSlotId(slot.id);
+        try {
+          await deleteClinicSlot(slot.id);
+          setSlots((prev) => prev.filter((s) => s.id !== slot.id));
+          showToast("Consultation slot deleted");
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        } catch (err: any) {
+          showToast(err?.message || "Failed to delete slot", "error");
+          setConfirmModal((prev) => ({ ...prev, isLoading: false }));
+        } finally {
+          setDeletingSlotId(null);
+        }
+      },
+    });
   };
 
-  // Delete Slot Handler
-  const handleDeleteSlot = async (slotId: string) => {
-    if (!confirm("Are you sure you want to delete this time slot?")) return;
+  const handleToggleSlotDisabled = async (slot: DoctorSlot) => {
+    setTogglingSlotId(slot.id);
     try {
-      await deleteClinicSlot(slotId);
-      setSlots((prev) => prev.filter((s) => s.id !== slotId));
-    } catch (err: any) {
-      alert(err.message || "Failed to delete slot.");
-    }
-  };
-
-  // Toggle Slot Disabled Handler
-  const handleToggleSlotDisabled = async (slotId: string) => {
-    try {
-      const updated = await toggleSlotDisabled(slotId);
-      setSlots((prev) =>
-        prev.map((s) => (s.id === slotId ? { ...s, is_disabled: updated.is_disabled } : s))
+      const updated = await toggleSlotDisabled(slot.id);
+      setSlots((prev) => prev.map((s) => (s.id === slot.id ? updated : s)));
+      showToast(
+        updated.is_disabled ? "Slot disabled (hidden from patients)" : "Slot enabled and active"
       );
     } catch (err: any) {
-      alert(err.message || "Failed to update slot status.");
+      showToast(err?.message || "Failed to toggle slot availability", "error");
+    } finally {
+      setTogglingSlotId(null);
     }
   };
 
-  // Open Manual Booking Modal
-  const handleOpenBookModal = (slot: DoctorSlot) => {
-    setBookingSlotModal(slot);
-    setBookPatientName("");
-    setBookPatientPhone("");
-    setBookSymptoms("");
-    setBookingModalError(null);
+  const handleManualBookSlot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSlotForBooking || !manualPatientName.trim() || !manualPatientPhone.trim()) return;
+
+    setBookingSlotLoading(true);
+    try {
+      await manualBookClinicSlot(selectedSlotForBooking.id, {
+        patient_name: manualPatientName.trim(),
+        patient_phone: manualPatientPhone.trim(),
+        symptoms_reported: manualSymptoms.trim() || undefined,
+      });
+
+      // Update slot in state
+      setSlots((prev) =>
+        prev.map((s) =>
+          s.id === selectedSlotForBooking.id
+            ? { ...s, is_booked: true }
+            : s
+        )
+      );
+
+      // Refresh appointments to include new one
+      loadDashboardData(true);
+
+      setSelectedSlotForBooking(null);
+      setManualPatientName("");
+      setManualPatientPhone("");
+      setManualSymptoms("");
+      showToast("Slot successfully booked for patient!");
+    } catch (err: any) {
+      showToast(err?.message || "Failed to book slot", "error");
+    } finally {
+      setBookingSlotLoading(false);
+    }
   };
 
-  // Submit Manual Booking
-  const handleSubmitManualBooking = async (e: React.FormEvent) => {
+  const handleManualUnbookSlot = (slot: DoctorSlot) => {
+    const doc = doctors.find((d) => d.id === slot.doctor_id);
+    const docTitle = doc ? `Dr. ${doc.name}` : "Physician";
+    setConfirmModal({
+      isOpen: true,
+      title: "Release Booked Slot?",
+      message: `Are you sure you want to release the ${slot.start_time} - ${slot.end_time} booked slot for ${docTitle} back to the clinic open pool?`,
+      confirmLabel: "Yes, Release Slot",
+      variant: "warning",
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+        setReleasingSlotId(slot.id);
+        try {
+          const updated = await manualUnbookClinicSlot(slot.id);
+          setSlots((prev) => prev.map((s) => (s.id === slot.id ? updated : s)));
+          loadDashboardData(true);
+          showToast("Slot released back to open pool");
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        } catch (err: any) {
+          showToast(err?.message || "Failed to unbook slot", "error");
+          setConfirmModal((prev) => ({ ...prev, isLoading: false }));
+        } finally {
+          setReleasingSlotId(null);
+        }
+      },
+    });
+  };
+
+  // ==================== SECURITY ACTIONS ====================
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bookingSlotModal) return;
-    if (!bookPatientName.trim() || !bookPatientPhone.trim()) {
-      setBookingModalError("Patient name and phone number are required.");
+    setChangePasswordSuccess(null);
+    setChangePasswordError(null);
+
+    if (changePasswordNew !== changePasswordConfirm) {
+      setChangePasswordError("New passwords do not match.");
       return;
     }
-    setIsSubmittingBooking(true);
-    setBookingModalError(null);
+    if (changePasswordNew.length < 6) {
+      setChangePasswordError("New password must be at least 6 characters.");
+      return;
+    }
+
+    setChangePasswordLoading(true);
     try {
-      const updatedSlot = await manualBookClinicSlot(bookingSlotModal.id, {
-        patient_name: bookPatientName.trim(),
-        patient_phone: bookPatientPhone.trim(),
-        symptoms_reported: bookSymptoms.trim() || undefined,
-      });
-      setSlots((prev) => prev.map((s) => (s.id === updatedSlot.id ? updatedSlot : s)));
-      const appts = await getClinicAppointments();
-      setAppointments(appts);
-      setBookingSlotModal(null);
-      setSlotSuccessMsg("Appointment booked manually successfully!");
+      await changePassword(changePasswordCurrent, changePasswordNew);
+      setChangePasswordSuccess("Password successfully updated!");
+      setChangePasswordCurrent("");
+      setChangePasswordNew("");
+      setChangePasswordConfirm("");
     } catch (err: any) {
-      setBookingModalError(err.message || "Failed to book slot.");
+      setChangePasswordError(err?.message || "Failed to update password.");
     } finally {
-      setIsSubmittingBooking(false);
+      setChangePasswordLoading(false);
     }
   };
 
-  // Manual Unbook Slot
-  const handleUnbookSlot = async (slotId: string) => {
-    const linkedAppt = appointments.find((a) => a.slot_id === slotId);
-    const confirmMsg = linkedAppt
-      ? `Unbook slot for ${linkedAppt.patient_name} (${linkedAppt.patient_phone})?\n\nThis will cancel the appointment and open up the slot for new bookings.`
-      : "Are you sure you want to unbook this slot? This will cancel the associated appointment.";
-    if (!confirm(confirmMsg)) return;
+  // ==================== LOOKUPS & FILTERED DATA ====================
+  const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
-    try {
-      const updatedSlot = await manualUnbookClinicSlot(slotId);
-      setSlots((prev) => prev.map((s) => (s.id === updatedSlot.id ? updatedSlot : s)));
-      const appts = await getClinicAppointments();
-      setAppointments(appts);
-      setSlotSuccessMsg("Slot has been unbooked and opened up for new bookings.");
-    } catch (err: any) {
-      alert(err.message || "Failed to unbook slot.");
-    }
-  };
+  // Doctors lookup map
+  const doctorMap = useMemo(() => {
+    const map = new Map<string, Doctor>();
+    doctors.forEach((d) => map.set(d.id, d));
+    return map;
+  }, [doctors]);
 
-  // Open Doctor Modal
-  const handleOpenDoctorModal = (doc: Doctor) => {
-    setSelectedDoctorModal(doc);
-    setEditName(doc.name);
-    setEditSpecialty(doc.specialty);
-    setEditFee(doc.fee);
-    setEditSymptoms((doc.symptoms_treated || []).join(", "));
-    setIsEditingDoctor(false);
-    setIsSlotsCollapsed(true);
-  };
+  // Slots lookup map
+  const slotMap = useMemo(() => {
+    const map = new Map<string, DoctorSlot>();
+    slots.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [slots]);
 
-  // Toggle Doctor Availability Today
-  const handleToggleAvailabilityToday = async (docId: string) => {
-    try {
-      const updated = await toggleDoctorAvailabilityToday(docId);
-      setDoctors((prev) => prev.map((d) => (d.id === docId ? updated : d)));
-      if (selectedDoctorModal && selectedDoctorModal.id === docId) {
-        setSelectedDoctorModal(updated);
-      }
-    } catch (err: any) {
-      alert(err.message || "Failed to toggle doctor availability.");
-    }
-  };
+  const filteredAppointments = useMemo(() => {
+    return appointments.filter((appt) => {
+      // Search
+      const searchMatch =
+        !appointmentSearch ||
+        appt.patient_name.toLowerCase().includes(appointmentSearch.toLowerCase()) ||
+        appt.patient_phone.toLowerCase().includes(appointmentSearch.toLowerCase()) ||
+        (appt.symptoms_reported && appt.symptoms_reported.toLowerCase().includes(appointmentSearch.toLowerCase()));
 
-  // Save Doctor Edit Changes
-  const handleSaveDoctorEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedDoctorModal) return;
-    setUpdatingDoctor(true);
+      // Doctor
+      const doctorMatch =
+        appointmentDoctorFilter === "all" || appt.doctor_id === appointmentDoctorFilter;
 
-    const symptomsList = editSymptoms
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    try {
-      const updated = await updateClinicDoctor(selectedDoctorModal.id, {
-        name: editName.trim(),
-        specialty: editSpecialty.trim(),
-        fee: Number(editFee),
-        symptoms_treated: symptomsList,
-      });
-
-      setDoctors((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
-      setSelectedDoctorModal(updated);
-      setIsEditingDoctor(false);
-    } catch (err: any) {
-      alert(err.message || "Failed to update doctor details.");
-    } finally {
-      setUpdatingDoctor(false);
-    }
-  };
-
-  // Doctor ID to Name lookup
-  const getDoctorName = (id: string) => {
-    const found = doctors.find((d) => d.id === id);
-    return found ? found.name : "Physician";
-  };
-
-  const filteredAppointments = appointments.filter((a) => {
-    const query = appointmentSearch.toLowerCase();
-    const doc = getDoctorName(a.doctor_id).toLowerCase();
-    return (
-      a.patient_name.toLowerCase().includes(query) ||
-      a.patient_phone.includes(query) ||
-      doc.includes(query) ||
-      (a.symptoms_reported && a.symptoms_reported.toLowerCase().includes(query))
-    );
-  });
+      return searchMatch && doctorMatch;
+    });
+  }, [appointments, appointmentSearch, appointmentDoctorFilter]);
 
   const filteredSlots = useMemo(() => {
-    return slots.filter((s) => {
-      if (!slotDoctorFilter) return true;
-      return s.doctor_id === slotDoctorFilter;
+    return slots.filter((slot) => {
+      const docMatch = slotDoctorFilter === "all" || slot.doctor_id === slotDoctorFilter;
+      const dateMatch = !slotDateFilter || slot.slot_date === slotDateFilter;
+
+      let statusMatch = true;
+      if (slotStatusFilter === "available") {
+        statusMatch = !slot.is_booked && !slot.is_disabled;
+      } else if (slotStatusFilter === "booked") {
+        statusMatch = slot.is_booked;
+      } else if (slotStatusFilter === "disabled") {
+        statusMatch = Boolean(slot.is_disabled);
+      }
+
+      return docMatch && dateMatch && statusMatch;
     });
-  }, [slots, slotDoctorFilter]);
+  }, [slots, slotDoctorFilter, slotDateFilter, slotStatusFilter]);
 
-  const modalDoctorSlots = useMemo(() => {
-    if (!selectedDoctorModal) return [];
-    return slots.filter((s) => s.doctor_id === selectedDoctorModal.id);
-  }, [slots, selectedDoctorModal]);
+  // KPI Calculations
+  const todayAppointmentsCount = useMemo(() => {
+    return appointments.filter((a) => {
+      const slot = slotMap.get(a.slot_id);
+      return slot?.slot_date === todayStr;
+    }).length;
+  }, [appointments, slotMap, todayStr]);
 
-  const modalAppointmentSlot = useMemo(() => {
-    if (!selectedAppointmentModal) return null;
-    return slots.find((s) => s.id === selectedAppointmentModal.slot_id) || null;
-  }, [slots, selectedAppointmentModal]);
+  const activeDoctorsTodayCount = useMemo(() => {
+    return doctors.filter((d) => d.is_available_today).length;
+  }, [doctors]);
 
-  const modalAppointmentDoctor = useMemo(() => {
-    if (!selectedAppointmentModal) return null;
-    return doctors.find((d) => d.id === selectedAppointmentModal.doctor_id) || null;
-  }, [doctors, selectedAppointmentModal]);
+  const availableSlotsCount = useMemo(() => {
+    return slots.filter((s) => !s.is_booked && !s.is_disabled).length;
+  }, [slots]);
+
+  // Snippet Copy Handlers
+  const tenantToken = clinicProfile?.tenant_token || clinicProfile?.slug || getAuth().widget_token || getAuth().id || "demo-clinic-token";
+  const widgetSnippet = `<script src="${typeof window !== "undefined" ? window.location.origin : ""}/static/widget.js" data-tenant-token="${tenantToken}" async></script>`;
+
+  const handleCopySnippet = () => {
+    navigator.clipboard.writeText(widgetSnippet);
+    setCopiedSnippet(true);
+    setTimeout(() => setCopiedSnippet(false), 2500);
+  };
+
+  const handleCopyToken = () => {
+    navigator.clipboard.writeText(tenantToken);
+    setCopiedToken(true);
+    setTimeout(() => setCopiedToken(false), 2500);
+  };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#070b14] text-slate-100">
-      {/* ==================== LEFT SIDEBAR ==================== */}
-      <aside className="w-full md:w-64 lg:w-72 bg-[#0a0f1d] border-r border-emerald-500/10 flex flex-col shrink-0 z-30">
-        {/* Sidebar Header */}
-        <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
+    <div className="h-screen w-full overflow-hidden flex flex-col md:flex-row bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100 font-sans selection:bg-teal-500 selection:text-white">
+      {/* ==================== LEFT NAVIGATION SIDEBAR ==================== */}
+      <aside className="w-full md:w-64 lg:w-72 bg-white dark:bg-[#0E1524] border-r border-slate-200 dark:border-slate-800/80 flex flex-col shrink-0 z-30 transition-all md:h-screen md:max-h-screen">
+        {/* Sidebar Header Brand */}
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800/80 flex items-center justify-between shrink-0">
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-400 p-[1px] shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-all">
-              <div className="w-full h-full bg-[#070b14] rounded-xl flex items-center justify-center">
-                <Stethoscope className="w-4 h-4 text-emerald-400" />
-              </div>
+            <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-sm shadow-teal-600/30 group-hover:scale-105 transition-transform">
+              <Stethoscope className="w-5 h-5 text-white" />
             </div>
             <div>
-              <span className="font-bold text-base tracking-tight text-white block truncate max-w-[150px]">
+              <span className="font-bold text-sm tracking-tight text-slate-900 dark:text-slate-100 block truncate max-w-[150px]">
                 {tenantName}
               </span>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1">
-                Clinic Portal
-              </span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-teal-600 dark:text-teal-400">
+                  Clinic Portal
+                </span>
+              </div>
             </div>
           </Link>
+
           <button
             type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-slate-400 hover:text-white"
+            className="md:hidden p-2 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <Menu className="w-5 h-5" />
           </button>
         </div>
 
         {/* Sidebar Nav Items */}
-        <nav className={`p-3 space-y-1.5 flex-1 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
+        <nav className={`p-3 space-y-1 flex-1 overflow-y-auto ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
+          <div className="px-3 py-2 text-[11px] font-semibold tracking-wider uppercase text-slate-400 dark:text-slate-500">
+            Medical Operations
+          </div>
+
           <button
             type="button"
             onClick={() => {
@@ -622,15 +714,19 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "appointments"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <CalendarCheck className="w-4 h-4" />
+              <CalendarCheck className={`w-4 h-4 ${activeTab === "appointments" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
               <span>Appointments</span>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeTab === "appointments"
+                ? "bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+            }`}>
               {appointments.length}
             </span>
           </button>
@@ -643,15 +739,19 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "doctors"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Users className="w-4 h-4" />
+              <Users className={`w-4 h-4 ${activeTab === "doctors" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
               <span>Doctor Roster</span>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeTab === "doctors"
+                ? "bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+            }`}>
               {doctors.length}
             </span>
           </button>
@@ -664,18 +764,26 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "slots"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Clock className="w-4 h-4" />
-              <span>Slot Management</span>
+              <Clock className={`w-4 h-4 ${activeTab === "slots" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
+              <span>Consultation Slots</span>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-800 text-slate-300">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+              activeTab === "slots"
+                ? "bg-teal-100 dark:bg-teal-900/60 text-teal-800 dark:text-teal-200"
+                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+            }`}>
               {slots.length}
             </span>
           </button>
+
+          <div className="px-3 pt-5 pb-2 text-[11px] font-semibold tracking-wider uppercase text-slate-400 dark:text-slate-500">
+            Channels &amp; AI Setup
+          </div>
 
           <button
             type="button"
@@ -685,15 +793,15 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "whatsapp"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <MessageSquare className="w-4 h-4" />
-              <span>WhatsApp Automation</span>
+              <MessageSquare className={`w-4 h-4 ${activeTab === "whatsapp" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
+              <span>WhatsApp AI</span>
             </div>
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
           </button>
 
           <button
@@ -704,19 +812,17 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "widget"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Code2 className="w-4 h-4" />
-              <span>AI Widget & Embed</span>
+              <Code2 className={`w-4 h-4 ${activeTab === "widget" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
+              <span>Web Voice Widget</span>
             </div>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                clinicProfile?.is_widget_enabled !== false ? "bg-emerald-400" : "bg-rose-400"
-              }`}
-            />
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+              Embed
+            </span>
           </button>
 
           <button
@@ -727,1403 +833,1095 @@ export default function ClinicDashboardPage() {
             }}
             className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
               activeTab === "security"
-                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 shadow-sm"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Lock className="w-4 h-4" />
-              <span>Change Password</span>
+              <Shield className={`w-4 h-4 ${activeTab === "security" ? "text-teal-600 dark:text-teal-400" : "text-slate-400"}`} />
+              <span>Account Security</span>
             </div>
           </button>
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t border-slate-800/80 bg-slate-950/60">
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 space-y-3 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <Stethoscope className="w-4 h-4" />
+              <div className="w-8 h-8 rounded-full bg-teal-100 dark:bg-teal-950/80 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 font-bold text-xs flex items-center justify-center">
+                {tenantName.slice(0, 2).toUpperCase()}
               </div>
-              <div>
-                <span className="text-xs font-bold text-white block truncate max-w-[110px]">
-                  {tenantName}
-                </span>
-                <span className="text-[10px] text-emerald-400 font-medium">Online</span>
+              <div className="text-xs truncate max-w-[120px]">
+                <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">{tenantName}</p>
+                <p className="text-[10px] text-slate-400">Doctor Admin</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              title="Logout from Clinic"
-              className="p-2 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            <ThemeToggle className="w-8 h-8 rounded-lg" />
           </div>
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200/60 dark:border-rose-900/40 transition-colors cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign Out</span>
+          </button>
         </div>
       </aside>
 
       {/* ==================== MAIN CONTENT AREA ==================== */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
         {/* Top Header Bar */}
-        <header className="h-16 border-b border-emerald-500/10 glass-panel px-6 flex items-center justify-between sticky top-0 z-20">
+        <header className="sticky top-0 z-20 bg-white/90 dark:bg-[#0E1524]/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800/80 px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
           <div>
-            <h1 className="text-base font-bold text-white capitalize">
-              {activeTab === "appointments" && "Appointments Feed"}
-              {activeTab === "doctors" && "Physician Roster & Schedules"}
-              {activeTab === "slots" && "Consultation Slot Management"}
-              {activeTab === "whatsapp" && "WhatsApp Automation & QR Setup"}
-              {activeTab === "widget" && "AI Receptionist Web Widget"}
-              {activeTab === "security" && "Clinic Account Security"}
+            <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <span>Clinic Portal</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-semibold text-slate-800 dark:text-slate-200 capitalize">
+                {activeTab === "appointments" && "Appointments Feed"}
+                {activeTab === "doctors" && "Doctor Roster & Schedules"}
+                {activeTab === "slots" && "Consultation Slot Grid"}
+                {activeTab === "whatsapp" && "WhatsApp AI Automation"}
+                {activeTab === "widget" && "AI Receptionist Web Widget"}
+                {activeTab === "security" && "Account Security"}
+              </span>
+            </div>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight mt-0.5">
+              {activeTab === "appointments" && "Patient Appointments"}
+              {activeTab === "doctors" && "Physician Roster & Specialists"}
+              {activeTab === "slots" && "Booking Slots & Availability"}
+              {activeTab === "whatsapp" && "WhatsApp Auto-Receptionist"}
+              {activeTab === "widget" && "Web Voice & Chat Widget"}
+              {activeTab === "security" && "Clinic Security & Credentials"}
             </h1>
-            <p className="text-[11px] text-slate-400">
-              Manage patient bookings, physician roster, and embed settings
-            </p>
           </div>
 
           <div className="flex items-center gap-2.5">
-            {clinicProfile && (
-              <span
-                className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                  clinicProfile.is_widget_enabled !== false
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                    : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                }`}
+            {/* Quick Actions per Tab */}
+            {activeTab === "doctors" && (
+              <button
+                type="button"
+                onClick={() => setIsAddDoctorModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-sm shadow-teal-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
               >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    clinicProfile.is_widget_enabled !== false ? "bg-emerald-400" : "bg-rose-400"
-                  }`}
-                />
-                {clinicProfile.is_widget_enabled !== false ? "AI Receptionist Active" : "Widget Disabled"}
-              </span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Physician</span>
+              </button>
             )}
-            <ThemeToggle />
+
+            {activeTab === "slots" && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkSlotModalOpen(true)}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-sm shadow-teal-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  <span>Batch Generate</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSingleSlotModalOpen(true)}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Single Slot</span>
+                </button>
+              </div>
+            )}
+
+            {/* Refresh Data Button */}
             <button
-              onClick={handleRefresh}
+              type="button"
+              onClick={() => loadDashboardData(true)}
               disabled={refreshing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 rounded-xl border border-slate-700/60 transition-all cursor-pointer"
+              title={`Last refreshed at ${lastRefreshedAt.toLocaleTimeString()}`}
+              className="px-3 py-2 rounded-xl text-xs font-medium bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-3.5 h-3.5 text-teal-600 dark:text-teal-400 ${refreshing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
             </button>
           </div>
         </header>
 
+        {/* Global Error Banner */}
         {error && (
-          <div className="m-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-3">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-            <span>{error}</span>
+          <div className="mx-4 sm:mx-6 lg:mx-8 mt-4 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadDashboardData()}
+              className="text-xs font-bold underline cursor-pointer hover:text-rose-900 dark:hover:text-rose-100"
+            >
+              Retry
+            </button>
           </div>
         )}
 
-        <div className="p-6 max-w-7xl w-full">
-
-      {/* Tab 1: Appointments Feed */}
-      {activeTab === "appointments" && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-white">Live Patient Bookings</h2>
-              <p className="text-xs text-slate-400">Captured in real-time by the bilingual AI receptionist</p>
-            </div>
-            <div className="relative w-full sm:w-64">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={appointmentSearch}
-                onChange={(e) => setAppointmentSearch(e.target.value)}
-                placeholder="Search patient, phone, symptoms..."
-                className="w-full pl-9 pr-3.5 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-              />
-            </div>
-          </div>
-
-          <div className="glass-panel rounded-2xl border border-slate-800 overflow-hidden">
-            {loading ? (
-              <div className="p-12 text-center text-slate-400 text-sm">Loading appointment records...</div>
-            ) : filteredAppointments.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 text-sm">
-                No appointments found. When patients book via the AI chat widget, they appear here instantly.
+        {/* Executive KPI Stats Grid */}
+        <div className="p-4 sm:p-6 lg:p-8 pb-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Card 1: Today's Appointments */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Today's Appointments</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{todayAppointmentsCount}</h3>
+                  <span className="text-[11px] font-medium text-teal-600 dark:text-teal-400">Scheduled Today</span>
+                </div>
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-900/80 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
-                    <tr>
-                      <th className="px-5 py-3 font-semibold">Patient Name</th>
-                      <th className="px-5 py-3 font-semibold">Contact Phone</th>
-                      <th className="px-5 py-3 font-semibold">Assigned Doctor</th>
-                      <th className="px-5 py-3 font-semibold">Scheduled Slot</th>
-                      <th className="px-5 py-3 font-semibold">Reported Symptoms</th>
-                      <th className="px-5 py-3 font-semibold text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-medium">
-                    {filteredAppointments.map((app) => {
-                      const linkedSlot = slots.find((s) => s.id === app.slot_id);
-                      return (
-                        <tr
-                          key={app.id}
-                          onClick={() => setSelectedAppointmentModal(app)}
-                          className="hover:bg-slate-800/60 transition-colors cursor-pointer group"
-                          title="Click to view full appointment, doctor, and slot details"
-                        >
-                          <td className="px-5 py-3.5 text-white font-semibold flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold group-hover:bg-emerald-500/20 transition-colors">
-                              {app.patient_name[0]?.toUpperCase()}
-                            </div>
-                            <span className="group-hover:text-emerald-300 transition-colors">{app.patient_name}</span>
-                          </td>
-                          <td className="px-5 py-3.5 font-mono text-slate-300">
-                            <span className="inline-flex items-center gap-1.5">
-                              <Phone className="w-3 h-3 text-slate-500" />
-                              {app.patient_phone}
-                            </span>
-                          </td>
-                          <td className="px-5 py-3.5 text-cyan-300 font-semibold">{getDoctorName(app.doctor_id)}</td>
-                          <td className="px-5 py-3.5">
-                            {linkedSlot ? (
-                              <div className="flex flex-col text-[11px] font-mono">
-                                <span className="text-white font-semibold">{linkedSlot.slot_date}</span>
-                                <span className="text-slate-400">
-                                  {linkedSlot.start_time.slice(0, 5)} – {linkedSlot.end_time.slice(0, 5)}
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-[11px] text-slate-500 italic">Slot #{app.slot_id.slice(0, 8)}</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5 text-slate-400 max-w-xs truncate">
-                            {app.symptoms_reported ? (
-                              <span className="px-2 py-0.5 rounded-md text-[11px] bg-slate-800 text-slate-300 border border-slate-700/60">
-                                {app.symptoms_reported}
-                              </span>
-                            ) : (
-                              <span className="text-slate-600 italic">General Consultation</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-3.5 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                <CheckCircle2 className="w-3 h-3" />
-                                Confirmed
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedAppointmentModal(app);
-                                }}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700 border border-slate-700 transition-colors"
-                                title="View Appointment Details"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div className="w-11 h-11 rounded-xl bg-teal-50 dark:bg-teal-950/50 border border-teal-200 dark:border-teal-800/50 flex items-center justify-center text-teal-600 dark:text-teal-400">
+                <CalendarCheck className="w-5 h-5" />
               </div>
-            )}
+            </div>
+
+            {/* Card 2: Active Doctors on Duty */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Doctors On Duty Today</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{activeDoctorsTodayCount}</h3>
+                  <span className="text-[11px] font-medium text-slate-500">/ {doctors.length} Total</span>
+                </div>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                <Users className="w-5 h-5" />
+              </div>
+            </div>
+
+            {/* Card 3: Available Booking Slots */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Open Consultation Slots</p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{availableSlotsCount}</h3>
+                  <span className="text-[11px] font-medium text-teal-600 dark:text-teal-400">Ready to Book</span>
+                </div>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/50 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                <Clock className="w-5 h-5" />
+              </div>
+            </div>
+
+            {/* Card 4: AI Voice & WhatsApp Receptionist */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">AI Receptionist Status</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Live 24/7 Active</h3>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-0.5">Bilingual (Urdu &amp; English)</p>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800/50 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                <Bot className="w-5 h-5" />
+              </div>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Tab 2: Doctors Management */}
-      {activeTab === "doctors" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Add Doctor Form */}
-          <div className="lg:col-span-5">
-            <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-              <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-                <Plus className="w-4 h-4 text-emerald-400" />
-                <span>Add Doctor to Clinic</span>
-              </h2>
-              <p className="text-xs text-slate-400 mb-5">Doctors will be recommended by AI based on treated symptoms.</p>
+        {/* Tab Content Body */}
+        <div className="p-4 sm:p-6 lg:p-8 space-y-6">
+          {/* ==================== TAB 1: APPOINTMENTS ==================== */}
+          {activeTab === "appointments" && (
+            <div className="space-y-4">
+              {/* Filter Controls Bar */}
+              <div className="p-4 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                {/* Search Input */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={appointmentSearch}
+                    onChange={(e) => setAppointmentSearch(e.target.value)}
+                    placeholder="Search by patient name, phone, or symptoms..."
+                    className="w-full pl-9 pr-4 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition-all"
+                  />
+                  {appointmentSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAppointmentSearch("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
 
+                {/* Filter Selectors & Mode */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Doctor Selector */}
+                  <select
+                    value={appointmentDoctorFilter}
+                    onChange={(e) => setAppointmentDoctorFilter(e.target.value)}
+                    className="px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  >
+                    <option value="all">All Doctors</option>
+                    {doctors.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        Dr. {d.name} ({d.specialty})
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setAppointmentViewMode("cards")}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        appointmentViewMode === "cards"
+                          ? "bg-white dark:bg-slate-800 text-teal-600 dark:text-teal-400 shadow-xs"
+                          : "text-slate-400 hover:text-slate-600"
+                      }`}
+                      title="Cards View"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAppointmentViewMode("table")}
+                      className={`p-1.5 rounded-lg transition-all ${
+                        appointmentViewMode === "table"
+                          ? "bg-white dark:bg-slate-800 text-teal-600 dark:text-teal-400 shadow-xs"
+                          : "text-slate-400 hover:text-slate-600"
+                      }`}
+                      title="Table View"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Appointments List / Grid */}
+              {loading ? (
+                <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-400">
+                  <RefreshCw className="w-8 h-8 animate-spin text-teal-600" />
+                  <p className="text-xs">Loading patient appointments...</p>
+                </div>
+              ) : filteredAppointments.length === 0 ? (
+                <div className="p-12 text-center rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400 border border-teal-200 dark:border-teal-800/50 flex items-center justify-center mx-auto">
+                    <CalendarCheck className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No appointments found</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    {appointmentSearch || appointmentDoctorFilter !== "all"
+                      ? "No appointments match your current filter parameters. Try clearing your filters."
+                      : "Your AI receptionist is active and waiting for patients to book consultations via WhatsApp or website widget."}
+                  </p>
+                  {(appointmentSearch || appointmentDoctorFilter !== "all") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAppointmentSearch("");
+                        setAppointmentDoctorFilter("all");
+                      }}
+                      className="text-xs font-semibold text-teal-600 hover:underline"
+                    >
+                      Reset all filters
+                    </button>
+                  )}
+                </div>
+              ) : appointmentViewMode === "cards" ? (
+                /* Cards Grid View */
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredAppointments.map((appt) => {
+                    const doc = doctorMap.get(appt.doctor_id);
+                    const slot = slotMap.get(appt.slot_id);
+                    const slotDate = slot?.slot_date || appt.created_at?.split("T")[0];
+                    const isToday = slotDate === todayStr;
+
+                    return (
+                      <div
+                        key={appt.id}
+                        className="p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 hover:border-teal-400/60 dark:hover:border-teal-500/40 transition-all shadow-xs hover:shadow-md flex flex-col justify-between space-y-4"
+                      >
+                        <div>
+                          {/* Card Top: Status & Date */}
+                          <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800/80">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                              <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                              <span>Confirmed</span>
+                            </span>
+
+                            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                              <span className={`font-mono ${isToday ? "font-bold text-teal-600 dark:text-teal-400" : ""}`}>
+                                {isToday ? "Today, " : ""}{slotDate}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Patient Info */}
+                          <div className="pt-3 space-y-1.5">
+                            <h4 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
+                              {appt.patient_name}
+                            </h4>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <Phone className="w-3.5 h-3.5 text-slate-400" />
+                              <a
+                                href={`tel:${appt.patient_phone}`}
+                                className="font-mono hover:text-teal-600 transition-colors"
+                              >
+                                {appt.patient_phone}
+                              </a>
+                            </div>
+                          </div>
+
+                          {/* Physician Assigned */}
+                          <div className="mt-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800/80 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-500">Physician:</span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                {doc ? `Dr. ${doc.name}` : "Assigned Doctor"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-500">Time Window:</span>
+                              <span className="font-mono text-teal-600 dark:text-teal-400 font-bold">
+                                {slot ? `${slot.start_time} - ${slot.end_time}` : "Scheduled"}
+                              </span>
+                            </div>
+                            {doc?.fee !== undefined && (
+                              <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60 dark:border-slate-800/60">
+                                <span className="text-slate-500">Consultation Fee:</span>
+                                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                                  ${doc.fee}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Symptoms Reported */}
+                          {appt.symptoms_reported && (
+                            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 italic line-clamp-2">
+                              "{appt.symptoms_reported}"
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Card Actions */}
+                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAppointmentModal(appt)}
+                            className="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View Details</span>
+                          </button>
+
+                          <a
+                            href={`https://wa.me/${appt.patient_phone.replace(/[^0-9]/g, "")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 hover:bg-emerald-100 transition-colors"
+                            title="Chat on WhatsApp"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* Dense Table View */
+                <div className="rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                        <tr>
+                          <th className="p-4">Patient Name</th>
+                          <th className="p-4">Phone</th>
+                          <th className="p-4">Physician</th>
+                          <th className="p-4">Slot Date &amp; Time</th>
+                          <th className="p-4">Status</th>
+                          <th className="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                        {filteredAppointments.map((appt) => {
+                          const doc = doctorMap.get(appt.doctor_id);
+                          const slot = slotMap.get(appt.slot_id);
+                          return (
+                            <tr key={appt.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                              <td className="p-4 font-bold text-slate-900 dark:text-slate-100">
+                                {appt.patient_name}
+                              </td>
+                              <td className="p-4 font-mono text-slate-600 dark:text-slate-400">
+                                {appt.patient_phone}
+                              </td>
+                              <td className="p-4 font-medium text-slate-800 dark:text-slate-200">
+                                {doc ? `Dr. ${doc.name}` : "Assigned Doctor"}
+                              </td>
+                              <td className="p-4 font-mono text-slate-600 dark:text-slate-400">
+                                <span className="font-semibold text-teal-600 dark:text-teal-400">{slot?.slot_date || appt.created_at?.split("T")[0]}</span>{" "}
+                                &bull; {slot ? `${slot.start_time}-${slot.end_time}` : "Scheduled"}
+                              </td>
+                              <td className="p-4">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                  Confirmed
+                                </span>
+                              </td>
+                              <td className="p-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedAppointmentModal(appt)}
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-teal-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                  title="View Details"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ==================== TAB 2: DOCTORS ==================== */}
+          {activeTab === "doctors" && (
+            <div className="space-y-6">
               {doctorSuccessMsg && (
-                <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>{doctorSuccessMsg}</span>
                 </div>
               )}
 
-              <form onSubmit={handleCreateDoctor} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Doctor Full Name</label>
-                  <input
-                    type="text"
-                    value={docName}
-                    onChange={(e) => setDocName(e.target.value)}
-                    placeholder="e.g. Dr. Sarah Jenkins"
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
+              {doctors.length === 0 ? (
+                <div className="p-12 text-center rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-teal-50 dark:bg-teal-950/50 text-teal-600 border border-teal-200 dark:border-teal-800 flex items-center justify-center mx-auto">
+                    <Users className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No physicians registered</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    Add your clinic's doctors so the AI receptionist can explain their medical specialties and schedule patient appointments.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsAddDoctorModalOpen(true)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add First Doctor</span>
+                  </button>
                 </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {doctors.map((doctor) => {
+                    const isAvailable = doctor.is_available_today;
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Specialty</label>
-                  <input
-                    type="text"
-                    value={docSpecialty}
-                    onChange={(e) => setDocSpecialty(e.target.value)}
-                    placeholder="e.g. Cardiology, Pediatrics, General Medicine"
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
+                    return (
+                      <div
+                        key={doctor.id}
+                        className="p-5 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 hover:border-teal-400/60 dark:hover:border-teal-500/40 transition-all shadow-xs flex flex-col justify-between space-y-4"
+                      >
+                        <div className="space-y-3">
+                          {/* Doctor Avatar & Identity */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-600 to-cyan-500 text-white font-bold text-sm flex items-center justify-center shadow-sm">
+                                {doctor.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .slice(0, 2)
+                                  .toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                                  Dr. {doctor.name}
+                                </h4>
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60 mt-0.5">
+                                  {doctor.specialty}
+                                </span>
+                              </div>
+                            </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Symptoms Treated (Comma-separated)</label>
-                  <input
-                    type="text"
-                    value={docSymptoms}
-                    onChange={(e) => setDocSymptoms(e.target.value)}
-                    placeholder="e.g. chest pain, hypertension, shortness of breath"
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Consultation Fee ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={docFee}
-                    onChange={(e) => setDocFee(Number(e.target.value))}
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={creatingDoctor}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
-                >
-                  {creatingDoctor ? "Registering..." : "Add Doctor"}
-                </button>
-              </form>
-            </div>
-          </div>
-
-          {/* Doctors List */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-white">Active Physicians ({doctors.length})</h2>
-              <span className="text-[11px] text-slate-400">Click any card to view details, edit, or set availability</span>
-            </div>
-
-            {doctors.length === 0 ? (
-              <div className="glass-panel p-8 rounded-2xl text-center text-slate-500 text-xs">
-                No doctors registered yet. Add your first clinic doctor using the form.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {doctors.map((doc) => {
-                  const isAvailable = doc.is_available_today !== false;
-                  return (
-                    <div
-                      key={doc.id}
-                      onClick={() => handleOpenDoctorModal(doc)}
-                      className="glass-panel p-5 rounded-2xl border border-slate-800 hover:border-emerald-500/40 transition-all space-y-3 cursor-pointer group"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-bold text-white group-hover:text-emerald-300 transition-colors">
-                              {doc.name}
-                            </h3>
+                            <button
+                              type="button"
+                              onClick={() => openDoctorEditModal(doctor)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                              title="Edit Physician Profile"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
                           </div>
-                          <span className="text-xs text-emerald-400 font-medium">{doc.specialty}</span>
-                        </div>
-                        <div className="flex flex-col items-end gap-1.5">
-                          <span className="px-2 py-0.5 rounded-lg text-xs font-mono font-bold bg-slate-900 text-slate-200 border border-slate-700">
-                            ${doc.fee}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider ${
-                              isAvailable
-                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                            }`}
-                          >
-                            {isAvailable ? "Available Today" : "Unavailable Today"}
-                          </span>
-                        </div>
-                      </div>
 
-                      <div>
-                        <span className="text-[10px] uppercase font-semibold text-slate-500 block mb-1">
-                          Symptoms Treated
-                        </span>
-                        <div className="flex flex-wrap gap-1">
-                          {doc.symptoms_treated && doc.symptoms_treated.length > 0 ? (
-                            doc.symptoms_treated.map((sym, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-0.5 rounded-md text-[10px] bg-slate-800/80 text-slate-300 border border-slate-700/60"
-                              >
-                                {sym}
+                          {/* Fee & Availability Info */}
+                          <div className="grid grid-cols-2 gap-2 pt-2 text-xs">
+                            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+                              <span className="text-[10px] uppercase font-semibold text-slate-400 block">Consultation Fee</span>
+                              <span className="font-bold text-slate-900 dark:text-slate-100 font-mono text-sm">
+                                ${doctor.fee || 50}
                               </span>
-                            ))
-                          ) : (
-                            <span className="text-[10px] text-slate-500 italic">General practice</span>
+                            </div>
+
+                            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
+                              <span className="text-[10px] uppercase font-semibold text-slate-400 block">Today's Duty</span>
+                              <span className={`text-xs font-bold flex items-center gap-1 mt-0.5 ${
+                                isAvailable ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"
+                              }`}>
+                                <span className={`w-2 h-2 rounded-full ${isAvailable ? "bg-emerald-500" : "bg-slate-400"}`}></span>
+                                {isAvailable ? "On Duty" : "Off Duty"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Symptoms Treated Chips */}
+                          {doctor.symptoms_treated && doctor.symptoms_treated.length > 0 && (
+                            <div className="space-y-1 pt-1">
+                              <span className="text-[10px] font-semibold uppercase text-slate-400 tracking-wider">
+                                Symptoms &amp; Conditions
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {doctor.symptoms_treated.slice(0, 4).map((symptom, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200/60 dark:border-slate-700/60"
+                                  >
+                                    {symptom}
+                                  </span>
+                                ))}
+                                {doctor.symptoms_treated.length > 4 && (
+                                  <span className="text-[10px] text-slate-400 self-center">
+                                    +{doctor.symptoms_treated.length - 4} more
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
+
+                        {/* Card Bottom: Duty Toggle & Slot Generator Shortcut */}
+                        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            disabled={togglingDoctorId === doctor.id}
+                            onClick={() => handleToggleDoctorToday(doctor)}
+                            className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60 ${
+                              isAvailable
+                                ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100"
+                                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                            }`}
+                          >
+                            {togglingDoctorId === doctor.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Power className="w-3.5 h-3.5" />
+                            )}
+                            <span>
+                              {togglingDoctorId === doctor.id
+                                ? "Updating..."
+                                : isAvailable
+                                ? "Available Today"
+                                : "Mark Available"}
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBulkDoctorId(doctor.id);
+                              setIsBulkSlotModalOpen(true);
+                            }}
+                            className="p-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-teal-50 dark:hover:bg-teal-950/40 text-slate-600 dark:text-slate-400 hover:text-teal-600 transition-colors"
+                            title="Generate Slots for this Doctor"
+                          >
+                            <CalendarDays className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
-      {/* Tab 3: Slot Creator & Schedule */}
-      {activeTab === "slots" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Column: Single Slot + Bulk Slot Creators */}
-          <div className="lg:col-span-5 space-y-6">
-            {/* 1. Single Time Slot Creator */}
-            <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-              <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-emerald-400" />
-                <span>Create Single Time Slot</span>
-              </h2>
-              <p className="text-xs text-slate-400 mb-5">Open an individual slot for a specific date and time.</p>
-
+          {/* ==================== TAB 3: CONSULTATION SLOTS ==================== */}
+          {activeTab === "slots" && (
+            <div className="space-y-4">
               {slotSuccessMsg && (
-                <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>{slotSuccessMsg}</span>
                 </div>
               )}
 
-              <form onSubmit={handleCreateSlot} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Select Doctor</label>
-                  <select
-                    value={selectedDoctorId}
-                    onChange={(e) => {
-                      setSelectedDoctorId(e.target.value);
-                      setBulkDoctorId(e.target.value);
-                    }}
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  >
-                    {doctors.length === 0 && <option value="">No doctors available</option>}
-                    {doctors.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name} ({d.specialty})
-                      </option>
+              {/* Slots Filter Header */}
+              <div className="p-4 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Doctor Selector */}
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 font-medium">Physician:</span>
+                    <select
+                      value={slotDoctorFilter}
+                      onChange={(e) => setSlotDoctorFilter(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    >
+                      <option value="all">All Physicians</option>
+                      {doctors.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          Dr. {d.name} ({d.specialty})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Date Filter */}
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 font-medium">Date:</span>
+                    <input
+                      type="date"
+                      value={slotDateFilter}
+                      onChange={(e) => setSlotDateFilter(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    />
+                    {slotDateFilter && (
+                      <button
+                        type="button"
+                        onClick={() => setSlotDateFilter("")}
+                        className="text-xs text-slate-400 hover:text-slate-600"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Status Pills */}
+                  <div className="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs">
+                    {(["all", "available", "booked", "disabled"] as const).map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setSlotStatusFilter(status)}
+                        className={`px-3 py-1 rounded-lg font-medium capitalize transition-all cursor-pointer ${
+                          slotStatusFilter === status
+                            ? "bg-white dark:bg-slate-800 text-teal-600 dark:text-teal-400 shadow-xs font-bold"
+                            : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                        }`}
+                      >
+                        {status}
+                      </button>
                     ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Slot Date</label>
-                  <input
-                    type="date"
-                    value={slotDate}
-                    onChange={(e) => setSlotDate(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Start Time</label>
-                    <input
-                      type="time"
-                      value={slotStartTime}
-                      onChange={(e) => setSlotStartTime(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">End Time</label>
-                    <input
-                      type="time"
-                      value={slotEndTime}
-                      onChange={(e) => setSlotEndTime(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={creatingSlot || doctors.length === 0}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
-                >
-                  {creatingSlot ? "Creating Slot..." : "Add Single Slot"}
-                </button>
-              </form>
-            </div>
-
-            {/* 2. Bulk Slot Generator */}
-            <div className="glass-panel p-6 rounded-2xl border border-indigo-500/30 glow-blue">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  <Layers className="w-4 h-4" />
+                <div className="text-xs text-slate-500 font-mono">
+                  Showing <strong>{filteredSlots.length}</strong> slots
                 </div>
-                <h2 className="text-base font-bold text-white">Bulk Slot Generator</h2>
               </div>
-              <p className="text-xs text-slate-400 mb-5">
-                Generate recurrent schedule windows across date ranges, intervals, and optional lunch breaks.
-              </p>
 
-              {bulkSuccessMsg && (
-                <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                  <span>{bulkSuccessMsg}</span>
+              {/* Slots Grid */}
+              {loading ? (
+                <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-400">
+                  <RefreshCw className="w-8 h-8 animate-spin text-teal-600" />
+                  <p className="text-xs">Loading consultation slots...</p>
                 </div>
-              )}
-
-              <form onSubmit={handleCreateBulkSlots} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Select Doctor</label>
-                  <select
-                    value={bulkDoctorId}
-                    onChange={(e) => setBulkDoctorId(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                  >
-                    {doctors.length === 0 && <option value="">No doctors available</option>}
-                    {doctors.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name} ({d.specialty})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Date Range */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Start Date</label>
-                    <input
-                      type="date"
-                      value={bulkStartDate}
-                      onChange={(e) => setBulkStartDate(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                    />
+              ) : filteredSlots.length === 0 ? (
+                <div className="p-12 text-center rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-teal-50 dark:bg-teal-950/50 text-teal-600 border border-teal-200 dark:border-teal-800 flex items-center justify-center mx-auto">
+                    <Clock className="w-6 h-6" />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">End Date</label>
-                    <input
-                      type="date"
-                      value={bulkEndDate}
-                      onChange={(e) => setBulkEndDate(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                    />
-                  </div>
-                </div>
-
-                {/* Weekday Checkboxes */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-slate-300">Days to Include</label>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">No consultation slots found</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    Generate booking intervals so patients can schedule appointments with your doctors.
+                  </p>
+                  <div className="flex items-center justify-center gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() =>
-                        setBulkDays(bulkDays.length === 7 ? [] : [1, 2, 3, 4, 5, 6, 0])
-                      }
-                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium"
+                      onClick={() => setIsBulkSlotModalOpen(true)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-700 text-white shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
                     >
-                      {bulkDays.length === 7 ? "Deselect All" : "Select All"}
+                      <CalendarDays className="w-3.5 h-3.5" />
+                      <span>Batch Generate Slots</span>
                     </button>
                   </div>
-                  <div className="grid grid-cols-7 gap-1.5 bg-slate-900/90 p-2 rounded-xl border border-slate-800">
-                    {DAYS_OF_WEEK.map((day) => {
-                      const isChecked = bulkDays.includes(day.value);
-                      return (
-                        <button
-                          key={day.value}
-                          type="button"
-                          onClick={() => toggleBulkDay(day.value)}
-                          className={`py-1.5 text-[11px] font-bold rounded-lg transition-all ${
-                            isChecked
-                              ? "bg-indigo-600 text-white shadow-sm"
-                              : "bg-slate-800/60 text-slate-500 hover:text-slate-300"
-                          }`}
-                        >
-                          {day.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Operating Hours Window */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Start Time (e.g. 09:00)</label>
-                    <input
-                      type="time"
-                      value={bulkStartTime}
-                      onChange={(e) => setBulkStartTime(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">End Time (e.g. 17:00)</label>
-                    <input
-                      type="time"
-                      value={bulkEndTime}
-                      onChange={(e) => setBulkEndTime(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                    />
-                  </div>
-                </div>
-
-                {/* Slot Interval */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">Slot Interval (Minutes)</label>
-                  <select
-                    value={slotInterval}
-                    onChange={(e) => setSlotInterval(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                  >
-                    <option value={15}>15 Minutes per Slot</option>
-                    <option value={20}>20 Minutes per Slot</option>
-                    <option value={30}>30 Minutes per Slot</option>
-                    <option value={45}>45 Minutes per Slot</option>
-                    <option value={60}>60 Minutes per Slot (1 hour)</option>
-                  </select>
-                </div>
-
-                {/* Optional Break Window */}
-                <div className="p-3 bg-slate-900/60 rounded-xl border border-slate-800 space-y-2.5">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={hasBreak}
-                      onChange={(e) => setHasBreak(e.target.checked)}
-                      className="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span>Exclude Lunch / Break Window (Optional)</span>
-                  </label>
-
-                  {hasBreak && (
-                    <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <label className="block text-[10px] text-slate-400 mb-1">Break Start (e.g. 13:00)</label>
-                        <input
-                          type="time"
-                          value={breakStartTime}
-                          onChange={(e) => setBreakStartTime(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] text-slate-400 mb-1">Break End (e.g. 14:00)</label>
-                        <input
-                          type="time"
-                          value={breakEndTime}
-                          onChange={(e) => setBreakEndTime(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={creatingBulkSlots || doctors.length === 0}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 transition-all shadow-md shadow-indigo-600/20 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>{creatingBulkSlots ? "Generating Slots..." : "Generate & Add Bulk Slots"}</span>
-                </button>
-              </form>
-            </div>
-          </div>
-
-          {/* Right Column: Slots Table */}
-          <div className="lg:col-span-7 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <h2 className="text-base font-bold text-white">Configured Slots ({filteredSlots.length})</h2>
-              <div className="w-full sm:w-56">
-                <select
-                  value={slotDoctorFilter}
-                  onChange={(e) => setSlotDoctorFilter(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-900/80 border border-slate-700/80 rounded-xl text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                >
-                  <option value="">All Doctors</option>
-                  {doctors.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="glass-panel rounded-2xl border border-slate-800 overflow-hidden">
-              {filteredSlots.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
-                  No slots found. Create new slots for your doctors using the single or bulk creator on the left.
                 </div>
               ) : (
-                <div className="overflow-x-auto max-h-[700px]">
-                  <table className="w-full text-left text-xs text-slate-300">
-                    <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800 sticky top-0 z-10">
-                      <tr>
-                        <th className="px-5 py-3 font-semibold">Doctor</th>
-                        <th className="px-5 py-3 font-semibold">Date</th>
-                        <th className="px-5 py-3 font-semibold">Window</th>
-                        <th className="px-5 py-3 font-semibold">Status</th>
-                        <th className="px-5 py-3 font-semibold text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-medium">
-                      {filteredSlots.map((slot) => {
-                        const isDisabled = slot.is_disabled === true;
-                        const linkedAppt = appointments.find((a) => a.slot_id === slot.id);
-                        return (
-                          <tr
-                            key={slot.id}
-                            className={`transition-colors ${
-                              isDisabled
-                                ? "bg-slate-950/40 text-slate-500 opacity-70"
-                                : "hover:bg-slate-800/40"
-                            }`}
-                          >
-                            <td className="px-5 py-3.5 text-white font-semibold">{getDoctorName(slot.doctor_id)}</td>
-                            <td className="px-5 py-3.5 font-mono text-slate-300">{slot.slot_date}</td>
-                            <td className="px-5 py-3.5 font-mono text-slate-400">
-                              {slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}
-                            </td>
-                            <td className="px-5 py-3.5">
-                              {isDisabled ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                                  <Ban className="w-3 h-3 text-slate-500" />
-                                  Disabled
-                                </span>
-                              ) : slot.is_booked ? (
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 w-fit">
-                                    Booked
-                                  </span>
-                                  {linkedAppt && (
-                                    <span
-                                      className="text-[11px] text-slate-300 truncate max-w-[150px]"
-                                      title={`${linkedAppt.patient_name} (${linkedAppt.patient_phone})`}
-                                    >
-                                      {linkedAppt.patient_name}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                  Available
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-5 py-3.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                {slot.is_booked ? (
-                                  <button
-                                    onClick={() => handleUnbookSlot(slot.id)}
-                                    title={
-                                      linkedAppt
-                                        ? `Unbook Slot (Booked by: ${linkedAppt.patient_name})`
-                                        : "Unbook Slot (Cancel Appointment)"
-                                    }
-                                    className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 hover:text-amber-300 transition-all cursor-pointer"
-                                  >
-                                    <CalendarX className="w-3.5 h-3.5" />
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => handleOpenBookModal(slot)}
-                                    disabled={isDisabled}
-                                    title={isDisabled ? "Cannot book disabled slot" : "Manually Book Slot"}
-                                    className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:text-emerald-300 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                                  >
-                                    <CalendarCheck className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {filteredSlots.map((slot) => {
+                    const doc = doctorMap.get(slot.doctor_id);
+                    const isBooked = slot.is_booked;
+                    const isDisabled = slot.is_disabled;
+
+                    return (
+                      <div
+                        key={slot.id}
+                        className={`p-4 rounded-2xl border transition-all shadow-xs flex flex-col justify-between space-y-3 ${
+                          isBooked
+                            ? "bg-purple-50/50 dark:bg-purple-950/20 border-purple-200 dark:border-purple-900/50"
+                            : isDisabled
+                            ? "bg-slate-100/60 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-60"
+                            : "bg-white dark:bg-[#0E1524] border-slate-200 dark:border-slate-800 hover:border-teal-500"
+                        }`}
+                      >
+                        <div>
+                          {/* Slot Header */}
+                          <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                              {doc ? `Dr. ${doc.name}` : "Doctor"}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isBooked
+                                ? "bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300"
+                                : isDisabled
+                                ? "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                                : "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
+                            }`}>
+                              {isBooked ? "Booked" : isDisabled ? "Disabled" : "Available"}
+                            </span>
+                          </div>
+
+                          {/* Time & Date */}
+                          <div className="pt-2">
+                            <p className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">
+                              {slot.start_time} - {slot.end_time}
+                            </p>
+                            <p className="text-xs text-slate-500 font-mono mt-0.5">
+                              {slot.slot_date}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Slot Actions */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-xs">
+                          {!isBooked ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedSlotForBooking(slot)}
+                                className="px-2.5 py-1 rounded-lg font-semibold bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 hover:bg-teal-100 text-[11px] transition-colors"
+                              >
+                                Book Now
+                              </button>
+                              <div className="flex items-center gap-1">
                                 <button
-                                  onClick={() => handleToggleSlotDisabled(slot.id)}
+                                  type="button"
+                                  disabled={togglingSlotId === slot.id}
+                                  onClick={() => handleToggleSlotDisabled(slot)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 transition-colors"
                                   title={isDisabled ? "Enable Slot" : "Disable Slot"}
-                                  className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                    isDisabled
-                                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20"
-                                      : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white hover:bg-slate-700"
-                                  }`}
                                 >
-                                  {isDisabled ? <Power className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                                  {togglingSlotId === slot.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-600" />
+                                  ) : (
+                                    <Ban className="w-3.5 h-3.5" />
+                                  )}
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteSlot(slot.id)}
+                                  type="button"
+                                  disabled={deletingSlotId === slot.id}
+                                  onClick={() => handleDeleteSlot(slot)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 disabled:opacity-50 transition-colors"
                                   title="Delete Slot"
-                                  className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all cursor-pointer"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  {deletingSlotId === slot.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
                                 </button>
                               </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={releasingSlotId === slot.id}
+                              onClick={() => handleManualUnbookSlot(slot)}
+                              className="w-full py-1 rounded-lg font-semibold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 hover:bg-purple-200 text-[11px] transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                            >
+                              {releasingSlotId === slot.id && (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              )}
+                              <span>{releasingSlotId === slot.id ? "Releasing..." : "Release / Unbook"}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tab: WhatsApp Automation (WAHA QR Connect) */}
-        {activeTab === "whatsapp" && (
-          <div className="max-w-4xl space-y-6">
-            <WhatsAppConnectCard />
-          </div>
-        )}
+          {/* ==================== TAB 4: WHATSAPP AI ==================== */}
+          {activeTab === "whatsapp" && (
+            <WhatsAppConnectCard variant="clinic" />
+          )}
 
-        {/* Tab 4: AI Receptionist Widget */}
-        {activeTab === "widget" && (
-          <div className="max-w-3xl space-y-6">
-            <div className="glass-panel p-6 sm:p-7 rounded-2xl border border-emerald-500/20 shadow-xl space-y-5">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <Code2 className="w-5 h-5" />
-                </div>
+          {/* ==================== TAB 5: WEB WIDGET ==================== */}
+          {activeTab === "widget" && (
+            <div className="space-y-6">
+              <div className="p-6 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
                 <div>
-                  <h2 className="text-base font-bold text-white">AI Voice Receptionist Widget</h2>
-                  <p className="text-xs text-slate-400">
-                    Embed this zero-dependency widget onto your clinic website or landing page.
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    AI Web Voice &amp; Appointment Widget
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Embed the AI receptionist on your clinic's public website with a single line of JavaScript. Patients can click to talk or chat, discover doctor schedules, and book slots in seconds.
                   </p>
                 </div>
-              </div>
 
-              {/* Status Alert */}
-              <div
-                className={`p-4 rounded-xl border flex items-center justify-between gap-3 ${
-                  clinicProfile?.is_widget_enabled !== false
-                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
-                    : "bg-rose-500/10 border-rose-500/20 text-rose-300"
-                }`}
-              >
-                <div className="flex items-center gap-2.5 text-xs font-semibold">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      clinicProfile?.is_widget_enabled !== false ? "bg-emerald-400" : "bg-rose-400"
-                    }`}
-                  />
-                  <span>
-                    {clinicProfile?.is_widget_enabled !== false
-                      ? "Your AI receptionist widget is LIVE and actively accepting patient chats and voice bookings."
-                      : "Your AI widget has been disabled by administrator. Contact your platform admin to re-enable."}
-                  </span>
-                </div>
-              </div>
-
-              {/* Token */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Clinic Unique Widget Token (x-widget-token)
-                </label>
-                <div className="flex items-center gap-2 p-3 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-emerald-400">
-                  <span className="flex-1 truncate">{clinicProfile?.widget_token || "Loading token..."}</span>
+                {/* Token Box */}
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Clinic Security Token
+                    </span>
+                    <span className="font-mono text-sm font-bold text-slate-900 dark:text-slate-100">
+                      {tenantToken}
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      if (clinicProfile?.widget_token) {
-                        navigator.clipboard.writeText(clinicProfile.widget_token);
-                        setCopiedToken(true);
-                        setTimeout(() => setCopiedToken(false), 2000);
-                      }
-                    }}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    onClick={handleCopyToken}
+                    className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto"
                   >
-                    {copiedToken ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedToken ? <Check className="w-3.5 h-3.5 text-teal-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedToken ? "Copied Token" : "Copy Token"}</span>
                   </button>
                 </div>
-              </div>
 
-              {/* Script Tag Snippet */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  HTML Embed Code Snippet
-                </label>
-                <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-cyan-300 break-all flex items-center justify-between gap-3">
-                  <span>
-                    {clinicProfile?.widget_token
-                      ? `<script src="${API_BASE}/static/widget.js" data-token="${clinicProfile.widget_token}" defer></script>`
-                      : "Loading snippet..."}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (clinicProfile?.widget_token) {
-                        navigator.clipboard.writeText(
-                          `<script src="${API_BASE}/static/widget.js" data-token="${clinicProfile.widget_token}" defer></script>`
-                        );
-                        setCopiedSnippet(true);
-                        setTimeout(() => setCopiedSnippet(false), 2000);
-                      }
-                    }}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0 cursor-pointer"
-                  >
-                    {copiedSnippet ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
+                {/* Snippet Embed Code Block */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      HTML Embed Snippet (Paste before closing &lt;/body&gt; tag):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopySnippet}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 hover:bg-teal-100 border border-teal-200 dark:border-teal-800/60 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      {copiedSnippet ? <Check className="w-3.5 h-3.5 text-teal-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedSnippet ? "Copied Code" : "Copy Snippet"}</span>
+                    </button>
+                  </div>
+                  <pre className="p-4 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs overflow-x-auto border border-slate-800">
+                    <code>{widgetSnippet}</code>
+                  </pre>
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  Paste this script tag into the <code>&lt;head&gt;</code> or bottom of the <code>&lt;body&gt;</code> of your website.
-                </p>
-              </div>
 
-              {/* Test Link Button */}
-              <div className="pt-2">
-                <a
-                  href={`${API_BASE}/static/test_widget.html`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700 flex items-center justify-center gap-2"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  <span>Preview Live Web Widget</span>
-                </a>
+                {/* Test Widget Live Link */}
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
+                  <p className="text-xs text-slate-500">
+                    Test the live patient experience in a standalone browser sandbox:
+                  </p>
+                  <a
+                    href={`/static/test_widget.html?token=${tenantToken}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Widget Sandbox &rarr;</span>
+                  </a>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Tab 5: Account Security / Change Password */}
-        {activeTab === "security" && (
-          <div className="max-w-md space-y-6">
-            <div className="glass-panel p-6 sm:p-7 rounded-2xl border border-emerald-500/20 shadow-xl">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <Lock className="w-5 h-5" />
-                </div>
+          {/* ==================== TAB 6: SECURITY ==================== */}
+          {activeTab === "security" && (
+            <div className="max-w-2xl space-y-6">
+              <div className="p-6 rounded-2xl bg-white dark:bg-[#0E1524] border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
                 <div>
-                  <h2 className="text-base font-bold text-white">Change Account Password</h2>
-                  <p className="text-xs text-slate-400">Update your clinic dashboard access password.</p>
-                </div>
-              </div>
-
-              {changePasswordSuccess && (
-                <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                  <span>{changePasswordSuccess}</span>
-                </div>
-              )}
-
-              {changePasswordError && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                  <span>{changePasswordError}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleChangePassword} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Current Password <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={changePasswordCurrent}
-                    onChange={(e) => setChangePasswordCurrent(e.target.value)}
-                    placeholder="Enter current password"
-                    required
-                    className="w-full px-3.5 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-teal-600" />
+                    <span>Change Clinic Password</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    Update your account credentials to keep patient data secure.
+                  </p>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    New Password <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={changePasswordNew}
-                    onChange={(e) => setChangePasswordNew(e.target.value)}
-                    placeholder="Minimum 6 characters"
-                    required
-                    minLength={6}
-                    className="w-full px-3.5 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
+                {changePasswordSuccess && (
+                  <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{changePasswordSuccess}</span>
+                  </div>
+                )}
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Confirm New Password <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={changePasswordConfirm}
-                    onChange={(e) => setChangePasswordConfirm(e.target.value)}
-                    placeholder="Re-enter new password"
-                    required
-                    minLength={6}
-                    className="w-full px-3.5 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                  />
-                </div>
+                {changePasswordError && (
+                  <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{changePasswordError}</span>
+                  </div>
+                )}
 
-                <div className="pt-2">
+                <form onSubmit={handleChangePassword} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                      Current Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={changePasswordCurrent}
+                      onChange={(e) => setChangePasswordCurrent(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                      New Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={changePasswordNew}
+                      onChange={(e) => setChangePasswordNew(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={changePasswordConfirm}
+                      onChange={(e) => setChangePasswordConfirm(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                    />
+                  </div>
+
                   <button
                     type="submit"
                     disabled={changePasswordLoading}
-                    className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors shadow-md shadow-emerald-600/20 disabled:opacity-50 cursor-pointer"
+                    className="w-full py-2.5 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    {changePasswordLoading ? "Updating Password..." : "Update Password"}
+                    {changePasswordLoading ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Lock className="w-3.5 h-3.5" />
+                    )}
+                    <span>{changePasswordLoading ? "Updating Password..." : "Update Password"}</span>
                   </button>
-                </div>
-              </form>
+                </form>
+              </div>
             </div>
-          </div>
-        )}
+          )}
         </div>
       </main>
 
-      {/* ==================== DOCTOR DETAILS MODAL ==================== */}
-      {selectedDoctorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="glass-panel w-full max-w-2xl p-6 sm:p-7 rounded-2xl border border-slate-700 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <Stethoscope className="w-6 h-6" />
+      {/* ==================== MODAL: ADD PHYSICIAN ==================== */}
+      {isAddDoctorModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-600">
+                  <Stethoscope className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">{selectedDoctorModal.name}</h3>
-                  <p className="text-xs text-emerald-400 font-medium">{selectedDoctorModal.specialty}</p>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Add New Physician</h3>
+                  <p className="text-xs text-slate-500">Register a doctor to your clinic's AI booking roster</p>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedDoctorModal(null)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Today Availability Quick Control Banner */}
-            <div
-              className={`p-4 rounded-xl border mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                selectedDoctorModal.is_available_today !== false
-                  ? "bg-emerald-500/10 border-emerald-500/20"
-                  : "bg-rose-500/10 border-rose-500/20"
-              }`}
-            >
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                      selectedDoctorModal.is_available_today !== false
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : "bg-rose-500/20 text-rose-400"
-                    }`}
-                  >
-                    {selectedDoctorModal.is_available_today !== false ? "Active for Today" : "Unavailable Today"}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300">
-                  {selectedDoctorModal.is_available_today !== false
-                    ? "Doctor is available for patient consultations and bookings today."
-                    : "Doctor is marked unavailable for today. AI receptionist will NOT book today even if slots exist."}
-                </p>
-              </div>
-
-              <button
-                onClick={() => handleToggleAvailabilityToday(selectedDoctorModal.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold shrink-0 flex items-center gap-1.5 transition-all cursor-pointer ${
-                  selectedDoctorModal.is_available_today !== false
-                    ? "bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 border border-rose-500/30"
-                    : "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30"
-                }`}
-              >
-                {selectedDoctorModal.is_available_today !== false ? (
-                  <>
-                    <CalendarX className="w-4 h-4" />
-                    <span>Set Unavailable for Today</span>
-                  </>
-                ) : (
-                  <>
-                    <UserCheck className="w-4 h-4" />
-                    <span>Set Available for Today</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* View or Edit Doctor Details */}
-            {isEditingDoctor ? (
-              <form onSubmit={handleSaveDoctorEdit} className="space-y-4 mb-6 p-4 bg-slate-900/60 rounded-xl border border-slate-800">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Edit Physician Details</h4>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingDoctor(false)}
-                    className="text-xs text-slate-400 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Doctor Name</label>
-                    <input
-                      type="text"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Specialty</label>
-                    <input
-                      type="text"
-                      value={editSpecialty}
-                      onChange={(e) => setEditSpecialty(e.target.value)}
-                      required
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Consultation Fee ($)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editFee}
-                      onChange={(e) => setEditFee(Number(e.target.value))}
-                      required
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Symptoms Treated</label>
-                    <input
-                      type="text"
-                      value={editSymptoms}
-                      onChange={(e) => setEditSymptoms(e.target.value)}
-                      placeholder="e.g. fever, headache, flu"
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    type="submit"
-                    disabled={updatingDoctor}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer"
-                  >
-                    {updatingDoctor ? "Saving..." : "Save Doctor Changes"}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="p-4 bg-slate-900/60 rounded-xl border border-slate-800 space-y-3 mb-6">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white uppercase tracking-wider">Physician Profile</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingDoctor(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg border border-emerald-500/20 transition-all cursor-pointer"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    <span>Edit Doctor</span>
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <span className="text-[11px] text-slate-500 uppercase block">Consultation Fee</span>
-                    <span className="text-sm font-bold text-white font-mono">${selectedDoctorModal.fee}</span>
-                  </div>
-                  <div>
-                    <span className="text-[11px] text-slate-500 uppercase block">Specialty</span>
-                    <span className="text-sm font-semibold text-cyan-300">{selectedDoctorModal.specialty}</span>
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-[11px] text-slate-500 uppercase block mb-1.5">Symptoms Treated</span>
-                  <div className="flex flex-wrap gap-1">
-                    {selectedDoctorModal.symptoms_treated && selectedDoctorModal.symptoms_treated.length > 0 ? (
-                      selectedDoctorModal.symptoms_treated.map((sym, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-0.5 rounded-md text-[10px] bg-slate-800 text-slate-300 border border-slate-700/60"
-                        >
-                          {sym}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-xs text-slate-500 italic">General practice</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Collapsible Doctor's Slots View */}
-            <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/40">
               <button
                 type="button"
-                onClick={() => setIsSlotsCollapsed(!isSlotsCollapsed)}
-                className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-800/40 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-indigo-400" />
-                  <span className="text-xs font-bold text-white">
-                    Configured Slots for Dr. {selectedDoctorModal.name} ({modalDoctorSlots.length})
-                  </span>
-                </div>
-                {isSlotsCollapsed ? (
-                  <ChevronDown className="w-4 h-4 text-slate-400" />
-                ) : (
-                  <ChevronUp className="w-4 h-4 text-slate-400" />
-                )}
-              </button>
-
-              {!isSlotsCollapsed && (
-                <div className="p-4 border-t border-slate-800 space-y-2">
-                  {modalDoctorSlots.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic py-2 text-center">
-                      No slots created for this doctor yet. Use the Slot Management tab to schedule.
-                    </p>
-                  ) : (
-                    <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-                      {modalDoctorSlots.map((slot) => {
-                        const isDisabled = slot.is_disabled === true;
-                        const linkedAppt = appointments.find((a) => a.slot_id === slot.id);
-                        return (
-                          <div
-                            key={slot.id}
-                            className={`flex items-center justify-between p-2.5 rounded-lg border text-xs ${
-                              isDisabled
-                                ? "bg-slate-950/60 border-slate-800 text-slate-500 opacity-70"
-                                : "bg-slate-900/90 border-slate-800 text-slate-300"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="font-mono text-slate-200">{slot.slot_date}</span>
-                              <span className="font-mono text-slate-400">
-                                {slot.start_time.slice(0, 5)} - {slot.end_time.slice(0, 5)}
-                              </span>
-                              {linkedAppt && slot.is_booked && (
-                                <span
-                                  className="text-[11px] text-amber-300 font-medium truncate max-w-[120px]"
-                                  title={`${linkedAppt.patient_name} (${linkedAppt.patient_phone})`}
-                                >
-                                  {linkedAppt.patient_name}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                              {isDisabled ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
-                                  Disabled
-                                </span>
-                              ) : slot.is_booked ? (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                                  Booked
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                  Available
-                                </span>
-                              )}
-
-                              {slot.is_booked ? (
-                                <button
-                                  onClick={() => handleUnbookSlot(slot.id)}
-                                  title={
-                                    linkedAppt
-                                      ? `Unbook Slot (Booked by: ${linkedAppt.patient_name})`
-                                      : "Unbook Slot (Cancel Appointment)"
-                                  }
-                                  className="p-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 hover:text-amber-300 cursor-pointer"
-                                >
-                                  <CalendarX className="w-3 h-3" />
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenBookModal(slot)}
-                                  disabled={isDisabled}
-                                  title={isDisabled ? "Cannot book disabled slot" : "Manually Book Slot"}
-                                  className="p-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:text-emerald-300 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                                >
-                                  <CalendarCheck className="w-3 h-3" />
-                                </button>
-                              )}
-
-                              <button
-                                onClick={() => handleToggleSlotDisabled(slot.id)}
-                                title={isDisabled ? "Enable Slot" : "Disable Slot"}
-                                className={`p-1 rounded-md border cursor-pointer ${
-                                  isDisabled
-                                    ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                                    : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
-                                }`}
-                              >
-                                {isDisabled ? <Power className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
-                              </button>
-                              <button
-                                onClick={() => handleDeleteSlot(slot.id)}
-                                title="Delete Slot"
-                                className="p-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 cursor-pointer"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== MANUAL BOOKING MODAL ==================== */}
-      {bookingSlotModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="glass-panel w-full max-w-md p-6 sm:p-7 rounded-2xl border border-emerald-500/30 shadow-2xl relative">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <CalendarCheck className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white">Manual Slot Booking</h3>
-                  <p className="text-xs text-slate-400">Book this appointment for a walk-in or phone patient</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setBookingSlotModal(null)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+                onClick={() => setIsAddDoctorModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Selected Slot Information Summary */}
-            <div className="p-3.5 bg-slate-900/80 rounded-xl border border-slate-800 mb-5 text-xs space-y-1.5">
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-slate-500">Physician:</span>
-                <span className="font-semibold text-white">Dr. {getDoctorName(bookingSlotModal.doctor_id)}</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-slate-500">Date:</span>
-                <span className="font-mono text-cyan-300 font-semibold">{bookingSlotModal.slot_date}</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-slate-500">Time Window:</span>
-                <span className="font-mono text-emerald-400 font-semibold">
-                  {bookingSlotModal.start_time.slice(0, 5)} – {bookingSlotModal.end_time.slice(0, 5)}
-                </span>
-              </div>
-            </div>
-
-            {bookingModalError && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{bookingModalError}</span>
-              </div>
-            )}
-
-            {/* Booking Form */}
-            <form onSubmit={handleSubmitManualBooking} className="space-y-4">
+            <form onSubmit={handleCreateDoctor} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Patient Full Name <span className="text-rose-400">*</span>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Doctor Full Name *
                 </label>
                 <input
                   type="text"
-                  value={bookPatientName}
-                  onChange={(e) => setBookPatientName(e.target.value)}
-                  placeholder="e.g. Ahmed Raza"
                   required
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  value={docName}
+                  onChange={(e) => setDocName(e.target.value)}
+                  placeholder="e.g. Sarah Khan"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Contact Phone Number <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="tel"
-                  value={bookPatientPhone}
-                  onChange={(e) => setBookPatientPhone(e.target.value)}
-                  placeholder="e.g. +92 300 1234567"
-                  required
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Specialty *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={docSpecialty}
+                    onChange={(e) => setDocSpecialty(e.target.value)}
+                    placeholder="e.g. Cardiologist"
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Consultation Fee ($) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5"
+                    required
+                    value={docFee}
+                    onChange={(e) => setDocFee(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-mono"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Symptoms / Consultation Notes <span className="text-slate-500 text-[10px]">(Optional)</span>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Symptoms Treated (comma-separated)
                 </label>
                 <input
                   type="text"
-                  value={bookSymptoms}
-                  onChange={(e) => setBookSymptoms(e.target.value)}
-                  placeholder="e.g. Follow-up consultation, fever and cough"
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                  value={docSymptoms}
+                  onChange={(e) => setDocSymptoms(e.target.value)}
+                  placeholder="e.g. Chest pain, palpitations, hypertension, dizziness"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setBookingSlotModal(null)}
-                  className="px-4 py-2.5 text-xs font-semibold text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+                  onClick={() => setIsAddDoctorModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingBooking}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-emerald-900/30"
+                  disabled={creatingDoctor}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  {isSubmittingBooking ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Confirming...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Confirm Booking</span>
-                    </>
-                  )}
+                  {creatingDoctor && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{creatingDoctor ? "Saving..." : "Add Physician"}</span>
                 </button>
               </div>
             </form>
@@ -2131,232 +1929,629 @@ export default function ClinicDashboardPage() {
         </div>
       )}
 
-      {/* ==================== APPOINTMENT DETAILS MODAL ==================== */}
-      {selectedAppointmentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="glass-panel w-full max-w-2xl p-6 sm:p-7 rounded-2xl border border-emerald-500/30 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  <CalendarCheck className="w-6 h-6" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-white">Appointment Details</h3>
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <CheckCircle2 className="w-3 h-3" />
-                      Confirmed
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 font-mono">
-                    Ref ID: #{selectedAppointmentModal.id.slice(0, 8)}
-                  </p>
-                </div>
-              </div>
+      {/* ==================== MODAL: EDIT PHYSICIAN ==================== */}
+      {isEditingDoctor && selectedDoctorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Edit Dr. {selectedDoctorModal.name}
+              </h3>
               <button
-                onClick={() => setSelectedAppointmentModal(null)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                type="button"
+                onClick={() => setIsEditingDoctor(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-5">
-              {/* Patient Information Card */}
-              <div className="p-4 bg-slate-900/70 rounded-xl border border-slate-800">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-emerald-400" />
-                    Patient Information
-                  </span>
-                  {selectedAppointmentModal.created_at && (
-                    <span className="text-[11px] text-slate-500 font-mono">
-                      Booked on: {new Date(selectedAppointmentModal.created_at).toLocaleString()}
-                    </span>
-                  )}
+            <form onSubmit={handleUpdateDoctor} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Doctor Full Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Specialty
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editSpecialty}
+                    onChange={(e) => setEditSpecialty(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                  />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center text-sm font-bold">
-                      {selectedAppointmentModal.patient_name[0]?.toUpperCase() || "P"}
-                    </div>
-                    <div>
-                      <span className="text-[11px] text-slate-500 block">Patient Name</span>
-                      <span className="text-sm font-bold text-white">
-                        {selectedAppointmentModal.patient_name}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[11px] text-slate-500 block mb-0.5">Contact Phone</span>
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={`tel:${selectedAppointmentModal.patient_phone}`}
-                        className="font-mono text-sm font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1.5"
-                      >
-                        <Phone className="w-3.5 h-3.5" />
-                        {selectedAppointmentModal.patient_phone}
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(selectedAppointmentModal.patient_phone);
-                          setCopiedPhone(true);
-                          setTimeout(() => setCopiedPhone(false), 2000);
-                        }}
-                        title="Copy phone number"
-                        className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                      >
-                        {copiedPhone ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                      </button>
-                    </div>
-                  </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Consultation Fee ($)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5"
+                    required
+                    value={editFee}
+                    onChange={(e) => setEditFee(Number(e.target.value))}
+                    className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20 font-mono"
+                  />
                 </div>
               </div>
 
-              {/* Reported Symptoms Card */}
-              <div className="p-4 bg-slate-900/70 rounded-xl border border-slate-800">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-2">
-                  <FileText className="w-3.5 h-3.5 text-cyan-400" />
-                  Reported Symptoms / Reason for Visit
-                </span>
-                {selectedAppointmentModal.symptoms_reported ? (
-                  <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-200 font-medium">
-                    {selectedAppointmentModal.symptoms_reported}
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/60 text-xs text-slate-400 italic">
-                    No specific symptoms noted. General medical consultation or checkup.
-                  </div>
-                )}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Symptoms Treated
+                </label>
+                <input
+                  type="text"
+                  value={editSymptoms}
+                  onChange={(e) => setEditSymptoms(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                />
               </div>
 
-              {/* Scheduled Appointment Slot Card */}
-              <div className="p-4 bg-slate-900/70 rounded-xl border border-slate-800">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-3">
-                  <Clock className="w-3.5 h-3.5 text-indigo-400" />
-                  Appointment Slot Information
-                </span>
-
-                {modalAppointmentSlot ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                      <span className="text-[10px] text-slate-500 uppercase block mb-1">Appointment Date</span>
-                      <div className="flex items-center gap-1.5 font-mono text-sm font-semibold text-white">
-                        <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                        {modalAppointmentSlot.slot_date}
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                      <span className="text-[10px] text-slate-500 uppercase block mb-1">Time Window</span>
-                      <div className="flex items-center gap-1.5 font-mono text-sm font-semibold text-emerald-400">
-                        <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                        {modalAppointmentSlot.start_time.slice(0, 5)} – {modalAppointmentSlot.end_time.slice(0, 5)}
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                      <span className="text-[10px] text-slate-500 uppercase block mb-1">Slot Status</span>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                        Booked
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-slate-400">
-                    Slot ID: #{selectedAppointmentModal.slot_id}
-                  </div>
-                )}
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEditingDoctor(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingDoctor}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {updatingDoctor && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{updatingDoctor ? "Saving..." : "Save Changes"}</span>
+                </button>
               </div>
+            </form>
+          </div>
+        </div>
+      )}
 
-              {/* Booked Doctor Card */}
-              <div className="p-4 bg-slate-900/70 rounded-xl border border-slate-800">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-3">
-                  <Stethoscope className="w-3.5 h-3.5 text-emerald-400" />
-                  Assigned Physician Details
-                </span>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div>
-                    <h4 className="text-sm font-bold text-white">
-                      {modalAppointmentDoctor?.name || getDoctorName(selectedAppointmentModal.doctor_id)}
-                    </h4>
-                    <p className="text-xs text-cyan-300 font-medium">
-                      {modalAppointmentDoctor?.specialty || "Physician"}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    {modalAppointmentDoctor?.fee !== undefined && (
-                      <div className="text-right">
-                        <span className="text-[10px] text-slate-500 block uppercase">Consultation Fee</span>
-                        <span className="font-mono text-xs font-bold text-white bg-slate-900 px-2 py-0.5 rounded border border-slate-700 inline-block">
-                          ${modalAppointmentDoctor.fee}
-                        </span>
-                      </div>
-                    )}
-                    {modalAppointmentDoctor && (
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          modalAppointmentDoctor.is_available_today !== false
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                        }`}
-                      >
-                        {modalAppointmentDoctor.is_available_today !== false ? "Available Today" : "Unavailable Today"}
-                      </span>
-                    )}
-                  </div>
+      {/* ==================== MODAL: BATCH GENERATE SLOTS ==================== */}
+      {isBulkSlotModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-600">
+                  <CalendarDays className="w-5 h-5" />
                 </div>
-
-                {modalAppointmentDoctor?.symptoms_treated && modalAppointmentDoctor.symptoms_treated.length > 0 && (
-                  <div className="mt-3">
-                    <span className="text-[10px] text-slate-500 uppercase block mb-1">Doctor Specialty Conditions Treated</span>
-                    <div className="flex flex-wrap gap-1">
-                      {modalAppointmentDoctor.symptoms_treated.map((sym, idx) => (
-                        <span
-                          key={idx}
-                          className="px-2 py-0.5 rounded-md text-[10px] bg-slate-800 text-slate-300 border border-slate-700/60"
-                        >
-                          {sym}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Batch Generate Slots</h3>
+                  <p className="text-xs text-slate-500">Auto-create 15-60 min appointment slots across date ranges</p>
+                </div>
               </div>
-            </div>
-
-            {/* Modal Actions Footer */}
-            <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-800">
               <button
                 type="button"
-                onClick={async () => {
-                  const slotId = selectedAppointmentModal.slot_id;
-                  setSelectedAppointmentModal(null);
-                  await handleUnbookSlot(slotId);
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer"
+                onClick={() => setIsBulkSlotModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
               >
-                <CalendarX className="w-3.5 h-3.5" />
-                <span>Cancel / Unbook Appointment</span>
+                <X className="w-5 h-5" />
               </button>
+            </div>
 
+            <form onSubmit={handleCreateBulkSlots} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Physician *
+                </label>
+                <select
+                  required
+                  value={bulkDoctorId}
+                  onChange={(e) => setBulkDoctorId(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Select Doctor...</option>
+                  {doctors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      Dr. {d.name} ({d.specialty})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={bulkStartDate}
+                    onChange={(e) => setBulkStartDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={bulkEndDate}
+                    onChange={(e) => setBulkEndDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={bulkStartTime}
+                    onChange={(e) => setBulkStartTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={bulkEndTime}
+                    onChange={(e) => setBulkEndTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Duration
+                  </label>
+                  <select
+                    value={slotInterval}
+                    onChange={(e) => setSlotInterval(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                  >
+                    <option value={15}>15 mins</option>
+                    <option value={20}>20 mins</option>
+                    <option value={30}>30 mins</option>
+                    <option value={45}>45 mins</option>
+                    <option value={60}>60 mins</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Break Time */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                    Exclude Lunch / Staff Break
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={hasBreak}
+                    onChange={(e) => setHasBreak(e.target.checked)}
+                    className="rounded text-teal-600 focus:ring-teal-500"
+                  />
+                </div>
+                {hasBreak && (
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <span className="text-[10px] text-slate-500 block mb-1">Break Starts</span>
+                      <input
+                        type="time"
+                        value={breakStartTime}
+                        onChange={(e) => setBreakStartTime(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 block mb-1">Break Ends</span>
+                      <input
+                        type="time"
+                        value={breakEndTime}
+                        onChange={(e) => setBreakEndTime(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Days of Week */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1.5">
+                  Generate on Days
+                </label>
+                <div className="flex items-center gap-1.5">
+                  {DAYS_OF_WEEK.map((d) => {
+                    const isSelected = bulkDays.includes(d.value);
+                    return (
+                      <button
+                        key={d.value}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setBulkDays(bulkDays.filter((v) => v !== d.value));
+                          } else {
+                            setBulkDays([...bulkDays, d.value]);
+                          }
+                        }}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-teal-600 text-white shadow-xs"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkSlotModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingBulkSlots}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {creatingBulkSlots && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{creatingBulkSlots ? "Generating..." : "Generate Slots"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: SINGLE SLOT CREATOR ==================== */}
+      {isSingleSlotModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Create Single Slot</h3>
+              <button
+                type="button"
+                onClick={() => setIsSingleSlotModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSingleSlot} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Physician *
+                </label>
+                <select
+                  required
+                  value={selectedDoctorId}
+                  onChange={(e) => setSelectedDoctorId(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                >
+                  <option value="">Select Doctor...</option>
+                  {doctors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      Dr. {d.name} ({d.specialty})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Slot Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={slotDate}
+                  onChange={(e) => setSlotDate(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={slotStartTime}
+                    onChange={(e) => setSlotStartTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={slotEndTime}
+                    onChange={(e) => setSlotEndTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSingleSlotModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingSlot}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {creatingSlot && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{creatingSlot ? "Saving..." : "Create Slot"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: MANUAL BOOK SLOT ==================== */}
+      {selectedSlotForBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Manual Patient Booking</h3>
+                <p className="text-xs text-slate-500 font-mono mt-0.5">
+                  {selectedSlotForBooking.slot_date} &bull; {selectedSlotForBooking.start_time}-{selectedSlotForBooking.end_time}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedSlotForBooking(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleManualBookSlot} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Patient Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={manualPatientName}
+                  onChange={(e) => setManualPatientName(e.target.value)}
+                  placeholder="e.g. Ali Ahmed"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Phone Number *
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={manualPatientPhone}
+                  onChange={(e) => setManualPatientPhone(e.target.value)}
+                  placeholder="e.g. +923001234567"
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Symptoms / Reason for Visit
+                </label>
+                <textarea
+                  rows={2}
+                  value={manualSymptoms}
+                  onChange={(e) => setManualSymptoms(e.target.value)}
+                  placeholder="e.g. Fever, regular checkup..."
+                  className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSlotForBooking(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={bookingSlotLoading}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {bookingSlotLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{bookingSlotLoading ? "Confirming..." : "Confirm Booking"}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: APPOINTMENT DETAILS ==================== */}
+      {selectedAppointmentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-lg bg-white dark:bg-[#0E1524] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-600">
+                  <CalendarCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    Appointment Details
+                  </h3>
+                  <span className="font-mono text-xs text-slate-400">ID: {selectedAppointmentModal.id.slice(0, 8)}...</span>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setSelectedAppointmentModal(null)}
-                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
               >
-                Close
+                <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Patient Name</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-sm mt-0.5 block">
+                    {selectedAppointmentModal.patient_name}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase block">Contact Phone</span>
+                  <span className="font-mono font-bold text-slate-900 dark:text-slate-100 text-sm mt-0.5 block">
+                    {selectedAppointmentModal.patient_phone}
+                  </span>
+                </div>
+              </div>
+
+              {(() => {
+                const doc = doctorMap.get(selectedAppointmentModal.doctor_id);
+                const slot = slotMap.get(selectedAppointmentModal.slot_id);
+                const slotDate = slot?.slot_date || selectedAppointmentModal.created_at?.split("T")[0];
+                return (
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Scheduled Date:</span>
+                      <span className="font-bold text-slate-900 dark:text-slate-100 font-mono">
+                        {slotDate}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Consultation Time:</span>
+                      <span className="font-bold text-teal-600 dark:text-teal-400 font-mono">
+                        {slot ? `${slot.start_time} - ${slot.end_time}` : "Scheduled Slot"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Physician:</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {doc ? `Dr. ${doc.name} (${doc.specialty})` : "Assigned Doctor"}
+                      </span>
+                    </div>
+                    {doc?.fee !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">Fee:</span>
+                        <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                          ${doc.fee}
+                        </span>
+                      </div>
+                    )}
+                    {selectedAppointmentModal.symptoms_reported && (
+                      <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800">
+                        <span className="text-slate-400 block mb-0.5 text-[10px] uppercase font-semibold">Symptoms Reported:</span>
+                        <p className="text-slate-700 dark:text-slate-300 italic">{selectedAppointmentModal.symptoms_reported}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              <div className="flex items-center gap-2 pt-2">
+                <a
+                  href={`tel:${selectedAppointmentModal.patient_phone}`}
+                  className="flex-1 py-2 px-3 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-800 dark:text-slate-200 text-center flex items-center justify-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Call Patient</span>
+                </a>
+                <a
+                  href={`https://wa.me/${selectedAppointmentModal.patient_phone.replace(/[^0-9]/g, "")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2 px-3 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white text-center flex items-center justify-center gap-1.5"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>WhatsApp</span>
+                </a>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Toast Notification */}
+      {statusToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce-in">
+          <div
+            className={`px-4 py-3 rounded-2xl shadow-xl border flex items-center gap-3 text-xs font-semibold backdrop-blur-md ${
+              statusToast.type === "error"
+                ? "bg-rose-50/95 dark:bg-rose-950/95 text-rose-900 dark:text-rose-200 border-rose-200 dark:border-rose-800"
+                : "bg-emerald-50/95 dark:bg-emerald-950/95 text-emerald-900 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800"
+            }`}
+          >
+            {statusToast.type === "error" ? (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            )}
+            <span>{statusToast.msg}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Global Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        details={confirmModal.details}
+        confirmLabel={confirmModal.confirmLabel}
+        cancelLabel={confirmModal.cancelLabel}
+        variant={confirmModal.variant}
+        isLoading={confirmModal.isLoading}
+        onConfirm={confirmModal.onConfirm}
+        onClose={() => {
+          if (!confirmModal.isLoading) {
+            setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          }
+        }}
+      />
     </div>
   );
 }

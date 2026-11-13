@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   MessageSquare,
   QrCode,
-  Smartphone,
   CheckCircle2,
   RefreshCw,
   Unlink,
@@ -12,10 +11,9 @@ import {
   Loader2,
   ShieldCheck,
   Radio,
-  ArrowRight,
   RotateCcw,
   HelpCircle,
-  Info,
+  Sparkles,
 } from "lucide-react";
 import {
   getWhatsAppStatus,
@@ -24,8 +22,13 @@ import {
   resetWhatsApp,
   WhatsAppStatusResponse,
 } from "@/lib/api";
+import ConfirmationModal from "@/src/components/ConfirmationModal";
 
-export default function WhatsAppConnectCard() {
+interface WhatsAppConnectCardProps {
+  variant?: "clinic" | "restaurant";
+}
+
+export default function WhatsAppConnectCard({ variant = "clinic" }: WhatsAppConnectCardProps) {
   const [status, setStatus] = useState<string>("UNKNOWN");
   const [sessionName, setSessionName] = useState<string>("");
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -36,8 +39,39 @@ export default function WhatsAppConnectCard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message?: string;
+    details?: React.ReactNode;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    variant?: "danger" | "warning" | "success" | "primary" | "emerald" | "amber" | "cyan";
+    onConfirm: () => Promise<void> | void;
+    isLoading?: boolean;
+  }>({
+    isOpen: false,
+    title: "",
+    onConfirm: () => {},
+  });
+
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef<boolean>(true);
+
+  const isClinic = variant === "clinic";
+
+  // Accent color variables based on variant
+  const accentIconBg = isClinic
+    ? "bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400 border-teal-200 dark:border-teal-800/50"
+    : "bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800/50";
+
+  const accentBadge = isClinic
+    ? "bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-800/60"
+    : "bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/60";
+
+  const accentButton = isClinic
+    ? "bg-teal-600 hover:bg-teal-700 text-white shadow-sm shadow-teal-600/20"
+    : "bg-amber-600 hover:bg-amber-700 text-white shadow-sm shadow-amber-600/20";
 
   // Fetch current connection status
   const checkStatus = useCallback(async (): Promise<string> => {
@@ -138,7 +172,6 @@ export default function WhatsAppConnectCard() {
       return;
     }
 
-    // Set up 3s polling
     pollTimerRef.current = setInterval(async () => {
       const updatedStatus = await checkStatus();
       if (updatedStatus === "WORKING") {
@@ -158,43 +191,53 @@ export default function WhatsAppConnectCard() {
   }, [status, checkStatus]);
 
   // Handle Disconnect
-  const handleDisconnect = async () => {
-    if (
-      !window.confirm(
-        "Are you sure you want to disconnect this WhatsApp number? AI automated replies will pause until a device is linked again."
-      )
-    ) {
-      return;
-    }
-
-    try {
-      setDisconnecting(true);
-      setError(null);
-      await disconnectWhatsApp();
-      setStatus("STOPPED");
-      setQrCode(null);
-      await fetchQR();
-    } catch (err: any) {
-      setError(err?.message || "Failed to disconnect WhatsApp session.");
-    } finally {
-      setDisconnecting(false);
-    }
+  const handleDisconnect = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Disconnect WhatsApp Gateway?",
+      message:
+        "Are you sure you want to disconnect this WhatsApp number? Automated replies and AI reception will pause until a device is linked again.",
+      confirmLabel: "Yes, Disconnect",
+      variant: "danger",
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, isLoading: true }));
+        try {
+          setDisconnecting(true);
+          setError(null);
+          await disconnectWhatsApp();
+          setStatus("STOPPED");
+          setQrCode(null);
+          await fetchQR();
+          setConfirmModal((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        } catch (err: any) {
+          setError(err?.message || "Failed to disconnect WhatsApp session.");
+          setConfirmModal((prev) => ({ ...prev, isLoading: false }));
+        } finally {
+          setDisconnecting(false);
+        }
+      },
+    });
   };
 
   const isConnected = status === "WORKING";
 
   return (
-    <div className="glass-panel p-6 sm:p-7 rounded-2xl border border-emerald-500/20 shadow-xl space-y-6">
+    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-6 sm:p-7 space-y-6">
       {/* Card Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <div className={`p-2.5 rounded-xl border ${accentIconBg}`}>
             <MessageSquare className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-white">WhatsApp Automation Setup</h2>
-            <p className="text-xs text-slate-400">
-              Link your business WhatsApp via QR code for automated 24/7 AI reception & appointments.
+            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              WhatsApp Reception Automation
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                Official Gateway
+              </span>
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Link your business WhatsApp via QR code for automated 24/7 AI reception, inquiries, and real-time booking.
             </p>
           </div>
         </div>
@@ -202,12 +245,12 @@ export default function WhatsAppConnectCard() {
         {/* Status Badge */}
         <div>
           {loadingInitial ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              <span>Checking...</span>
+              <span>Checking Status...</span>
             </span>
           ) : isConnected ? (
-            <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-sm shadow-emerald-500/10">
+            <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shadow-sm">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -215,8 +258,8 @@ export default function WhatsAppConnectCard() {
               <span>WhatsApp Connected &amp; AI Active</span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
-              <Radio className="w-3 h-3 text-amber-400 animate-pulse" />
+            <span className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border ${accentBadge}`}>
+              <Radio className="w-3 h-3 animate-pulse" />
               <span>Ready for QR Scan</span>
             </span>
           )}
@@ -225,68 +268,68 @@ export default function WhatsAppConnectCard() {
 
       {/* Error Banner */}
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
             <span>{error}</span>
           </div>
           <button
             type="button"
             onClick={fetchQR}
-            className="text-rose-400 hover:text-white underline text-xs font-medium cursor-pointer"
+            className="text-rose-700 dark:text-rose-300 hover:underline text-xs font-semibold cursor-pointer shrink-0"
           >
-            Retry
+            Retry Connection
           </button>
         </div>
       )}
 
       {/* Main State Views */}
       {loadingInitial ? (
-        <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-400">
-          <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-          <p className="text-xs">Initializing WhatsApp Gateway...</p>
+        <div className="py-14 flex flex-col items-center justify-center gap-3 text-slate-500">
+          <Loader2 className={`w-8 h-8 animate-spin ${isClinic ? "text-teal-600" : "text-amber-600"}`} />
+          <p className="text-xs font-medium">Connecting to WhatsApp Gateway Service...</p>
         </div>
       ) : isConnected ? (
         /* ==================== STATE 1: CONNECTED ==================== */
         <div className="space-y-6 animate-in fade-in">
-          <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-950/40 via-slate-900/60 to-slate-950 border border-emerald-500/30 space-y-4">
+          <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-emerald-200 dark:border-emerald-800/50 space-y-4">
             <div className="flex items-start gap-3.5">
-              <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 mt-0.5">
+              <div className="p-2 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 mt-0.5">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-sm font-bold text-white">
-                  WhatsApp Automation is Live
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  WhatsApp AI Receptionist is Live &amp; Automated
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  Incoming patient messages sent to your linked WhatsApp number are now automatically processed by your clinic's AI Receptionist with real-time doctor availability checking, slot booking, and FAQ handling.
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                  Incoming patient/customer messages sent to your linked WhatsApp number are instantly processed by the AI Receptionist with bilingual Roman Urdu and English natural voice &amp; text processing, schedule checking, and automatic database confirmation.
                 </p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
-              <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                <span className="text-slate-400">Gateway Session:</span>
-                <span className="font-mono text-emerald-400 font-bold">{sessionName || "Active"}</span>
+              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-2xl">
+                <span className="text-slate-500 dark:text-slate-400">Gateway Session:</span>
+                <span className="font-mono text-slate-900 dark:text-slate-100 font-bold">{sessionName || "Active"}</span>
               </div>
-              <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-                <span className="text-slate-400">AI Receptionist:</span>
-                <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Enabled &amp; Ready
+              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between shadow-2xl">
+                <span className="text-slate-500 dark:text-slate-400">Autonomous Booking:</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4" /> Enabled &amp; Active
                 </span>
               </div>
             </div>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-            <p className="text-[11px] text-slate-500">
-              Need to switch phone numbers or reconnect? Disconnect below and scan the QR code with your new device.
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Need to change your WhatsApp phone number? Disconnect below and scan with your new device.
             </p>
             <button
               type="button"
               onClick={handleDisconnect}
               disabled={disconnecting}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800/60 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {disconnecting ? (
                 <>
@@ -295,8 +338,8 @@ export default function WhatsAppConnectCard() {
                 </>
               ) : (
                 <>
-                  <Unlink className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Disconnect / Change Device</span>
+                  <Unlink className="w-3.5 h-3.5" />
+                  <span>Disconnect Number</span>
                 </>
               )}
             </button>
@@ -309,84 +352,86 @@ export default function WhatsAppConnectCard() {
             {/* Instructions Column (7 cols) */}
             <div className="lg:col-span-7 space-y-4">
               <div className="space-y-1">
-                <h3 className="text-sm font-bold text-white">How to connect your device:</h3>
-                <p className="text-xs text-slate-400">
-                  Follow these 3 simple steps to pair your WhatsApp Web session in seconds:
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Follow these 3 quick steps to link your phone:
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Pair your business WhatsApp Web session securely:
                 </p>
               </div>
 
-              <div className="space-y-3 pt-1">
+              <div className="space-y-2.5 pt-1">
                 {/* Step 1 */}
-                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0 border border-emerald-500/30">
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3">
+                  <div className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center shrink-0 border ${accentBadge}`}>
                     1
                   </div>
                   <div className="text-xs">
-                    <p className="font-semibold text-white">Open WhatsApp on your business phone</p>
-                    <p className="text-slate-400 text-[11px] mt-0.5">
-                      Launch the WhatsApp or WhatsApp Business application on your primary mobile phone.
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">Open WhatsApp on your mobile phone</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                      Launch WhatsApp or WhatsApp Business on your primary handset.
                     </p>
                   </div>
                 </div>
 
                 {/* Step 2 */}
-                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0 border border-emerald-500/30">
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3">
+                  <div className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center shrink-0 border ${accentBadge}`}>
                     2
                   </div>
                   <div className="text-xs">
-                    <p className="font-semibold text-white">
-                      Tap Settings / 3-dots &rarr; Linked Devices &rarr; Link a Device
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">
+                      Navigate to: Settings &rarr; Linked Devices &rarr; Link a Device
                     </p>
-                    <p className="text-slate-400 text-[11px] mt-0.5">
-                      On Android: Tap the 3-dots in top right. On iOS: Tap Settings tab in bottom right.
+                    <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                      On Android: Tap the 3-dots in top right. On iPhone: Tap Settings tab at bottom right.
                     </p>
                   </div>
                 </div>
 
                 {/* Step 3 */}
-                <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-start gap-3">
-                  <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-400 font-bold text-xs flex items-center justify-center shrink-0 border border-emerald-500/30">
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80 flex items-start gap-3">
+                  <div className={`w-6 h-6 rounded-full font-bold text-xs flex items-center justify-center shrink-0 border ${accentBadge}`}>
                     3
                   </div>
                   <div className="text-xs">
-                    <p className="font-semibold text-white">Point your camera at the QR code</p>
-                    <p className="text-slate-400 text-[11px] mt-0.5">
-                      Align your phone's camera viewfinder with the QR code box on the right.
+                    <p className="font-semibold text-slate-900 dark:text-slate-100">Scan the QR code displayed on the right</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                      Point your phone's camera at the QR code. Pairing typically takes 3 to 5 seconds.
                     </p>
                   </div>
                 </div>
               </div>
 
               {/* Status indicator line */}
-              <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+              <div className="flex items-center gap-2 pt-1 text-xs text-slate-500 dark:text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
                 <span>
-                  Status: <span className="font-mono text-slate-400">{status}</span> &bull; Auto-detecting link every 3 seconds
+                  Status: <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">{status}</span> &bull; Auto-detecting scan every 3s
                 </span>
               </div>
 
               {/* Troubleshooting Tips Box */}
-              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/90 text-xs space-y-2 mt-4">
-                <div className="flex items-center gap-2 text-slate-300 font-semibold text-[11px]">
-                  <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Troubleshooting "Couldn't link device" issues:</span>
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 text-xs space-y-2">
+                <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-semibold text-xs">
+                  <HelpCircle className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                  <span>Connection Troubleshooting:</span>
                 </div>
-                <ul className="text-[11px] text-slate-400 space-y-1.5 list-disc list-inside pl-1">
-                  <li>Ensure WhatsApp on your phone is updated to the latest version.</li>
-                  <li>Disconnect any active VPN or proxy on your mobile phone.</li>
-                  <li>If you have 4 linked devices already, log one out first.</li>
-                  <li>If WhatsApp displays an error, click <strong>"Regenerate QR / Reset Pairing"</strong> below to refresh encryption keys.</li>
+                <ul className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1.5 list-disc list-inside pl-1">
+                  <li>Ensure WhatsApp on your mobile phone is updated to the latest version.</li>
+                  <li>Disable any active VPN or proxy on your mobile handset during pairing.</li>
+                  <li>If you already have 4 linked devices, remove one before linking.</li>
+                  <li>If pairing times out, click <strong>"Regenerate QR / Reset Pairing"</strong> below.</li>
                 </ul>
               </div>
             </div>
 
             {/* QR Display Column (5 cols) */}
             <div className="lg:col-span-5 flex flex-col items-center justify-center">
-              <div className="relative p-4 bg-white rounded-2xl shadow-2xl border-4 border-emerald-500/20 flex flex-col items-center justify-center w-64 h-64">
+              <div className="relative p-5 bg-white dark:bg-slate-800 rounded-2xl shadow-md border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center w-64 h-64">
                 {loadingQR || resetting ? (
-                  <div className="flex flex-col items-center justify-center gap-2 text-slate-600">
-                    <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+                  <div className="flex flex-col items-center justify-center gap-2 text-slate-600 dark:text-slate-300">
+                    <Loader2 className={`w-8 h-8 animate-spin ${isClinic ? "text-teal-600" : "text-amber-600"}`} />
                     <span className="text-xs font-semibold">
                       {resetting ? "Resetting Handshake..." : "Generating Fresh QR..."}
                     </span>
@@ -413,32 +458,50 @@ export default function WhatsAppConnectCard() {
                   type="button"
                   onClick={handleResetPairing}
                   disabled={resetting || loadingQR}
-                  title="Clears corrupted state and generates a fresh pairing handshake"
-                  className="flex-1 py-2 px-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 transition-all shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Clears session state and creates a fresh QR pairing handshake"
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${accentButton}`}
                 >
                   <RotateCcw className={`w-3.5 h-3.5 ${resetting ? "animate-spin" : ""}`} />
-                  <span>Regenerate QR / Reset Pairing</span>
+                  <span>Regenerate QR</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={fetchQR}
                   disabled={loadingQR || resetting}
-                  title="Reload QR code image without clearing session"
-                  className="py-2 px-3 rounded-xl text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 hover:text-white transition-colors border border-slate-700/80 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Reload QR code image without resetting"
+                  className="py-2 px-3 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-slate-700 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-3 h-3 ${loadingQR ? "animate-spin text-emerald-400" : ""}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingQR ? "animate-spin text-teal-600" : ""}`} />
                   <span>Reload</span>
                 </button>
               </div>
 
-              <span className="text-[10px] text-slate-500 mt-2 text-center">
-                QR codes expire automatically every 20-30 seconds
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-2 text-center">
+                QR codes refresh automatically every 20-30 seconds
               </span>
             </div>
           </div>
         </div>
       )}
+
+      {/* Disconnect Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        details={confirmModal.details}
+        confirmLabel={confirmModal.confirmLabel}
+        cancelLabel={confirmModal.cancelLabel}
+        variant={confirmModal.variant}
+        isLoading={confirmModal.isLoading}
+        onConfirm={confirmModal.onConfirm}
+        onClose={() => {
+          if (!confirmModal.isLoading) {
+            setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+          }
+        }}
+      />
     </div>
   );
 }

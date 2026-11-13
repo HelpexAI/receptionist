@@ -17,8 +17,8 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "VoiceReceptionist — Autonomous AI Voice & Booking Receptionist",
-  description: "Next-generation AI receptionist for medical clinics and restaurants with bilingual voice synthesis.",
+  title: "AI Business Management — Autonomous Operations, POS & Receptionist Platform",
+  description: "Next-generation AI Business Management platform for clinics and restaurants with POS, Kitchen KDS, Rider fleet, and bilingual AI receptionist.",
 };
 
 export default function RootLayout({

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, Date, Time, Integer, Numeric, Text, ForeignKey, TIMESTAMP
+from sqlalchemy import Column, String, Boolean, Date, Time, Integer, Numeric, Float, Text, ForeignKey, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import synonym, relationship
@@ -22,6 +22,11 @@ class Business(Base):
     display_phone_number = Column(String(50), nullable=True)  # Reference phone e.g. "+923001234567"
     waba_id = Column(String(64), nullable=True)  # Meta WhatsApp Business Account ID
     is_widget_enabled = Column(Boolean, default=True, nullable=False)
+    kitchen_pin = Column(String(20), default="1234", nullable=True)
+    rider_pin = Column(String(20), default="1234", nullable=True)
+    pos_pin = Column(String(20), default="1234", nullable=True)
+    delivery_charges = Column(Float, default=0.0, nullable=True)
+    service_charges = Column(Float, default=0.0, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     # Linked portal users
@@ -87,6 +92,17 @@ class RestaurantTable(Base):
     table_number = Column(String(50), nullable=False)
     capacity = Column(Integer, nullable=False)
 
+class MenuCategory(Base):
+    __tablename__ = "menu_categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    business_id = Column(UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    display_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
 class MenuItem(Base):
     __tablename__ = "menu_items"
 
@@ -96,6 +112,9 @@ class MenuItem(Base):
     category = Column(String(100), nullable=False)
     price = Column(Numeric(10, 2), nullable=False)
     is_available = Column(Boolean, default=True)
+    description = Column(Text, nullable=True)
+    variants = Column(JSONB, default=list, nullable=True)
+    addons = Column(JSONB, default=list, nullable=True)
 
 class RestaurantReservation(Base):
     __tablename__ = "restaurant_reservations"
@@ -120,10 +139,14 @@ class RestaurantOrder(Base):
     customer_name = Column(String(255), nullable=False)
     customer_phone = Column(String(50), nullable=False, index=True)
     order_type = Column(String(50), nullable=False, default="delivery")  # 'delivery', 'pickup', 'dine_in'
+    table_number = Column(String(50), nullable=True)
     delivery_address = Column(Text, nullable=True)
     items = Column(JSONB, nullable=False, default=list)
     total_amount = Column(Numeric(10, 2), nullable=False, default=0.0)
-    status = Column(String(50), nullable=False, default="received", index=True)  # 'received', 'in_kitchen', 'ready', 'completed', 'cancelled'
+    status = Column(String(50), nullable=False, default="received", index=True)  # 'received', 'preparing', 'ready', 'out_for_delivery', 'reached', 'delivered', 'picked_up', 'cancelled'
+    cooking_started_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    rider_name = Column(String(100), nullable=True)
+    rider_phone = Column(String(50), nullable=True)
     special_instructions = Column(Text, nullable=True)
     channel = Column(String(50), default="whatsapp")
     whatsapp_chat_id = Column(String(100), nullable=True, index=True)

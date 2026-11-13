@@ -275,11 +275,11 @@ export default function AdminPage() {
   const newLeadsCount = leads.filter((l) => l.status === "new").length;
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#070b14] text-slate-100">
+    <div className="h-screen w-full overflow-hidden flex flex-col md:flex-row bg-[#070b14] text-slate-100">
       {/* ==================== LEFT SIDEBAR ==================== */}
-      <aside className="w-full md:w-64 lg:w-72 bg-[#0a0f1d] border-r border-emerald-500/10 flex flex-col shrink-0 z-30">
+      <aside className="w-full md:w-64 lg:w-72 bg-[#0a0f1d] border-r border-emerald-500/10 flex flex-col shrink-0 z-30 md:h-screen md:max-h-screen">
         {/* Sidebar Header */}
-        <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
+        <div className="p-5 border-b border-slate-800/80 flex items-center justify-between shrink-0">
           <Link href="/" className="flex items-center gap-3 group">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-400 p-[1px] shadow-lg shadow-emerald-500/20 group-hover:shadow-emerald-500/40 transition-all">
               <div className="w-full h-full bg-[#070b14] rounded-xl flex items-center justify-center">
@@ -288,7 +288,7 @@ export default function AdminPage() {
             </div>
             <div>
               <span className="font-bold text-base tracking-tight text-white block">
-                VoiceReceptionist
+                AI Business Management
               </span>
               <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1">
                 <Shield className="w-3 h-3 text-emerald-400" />
@@ -306,7 +306,7 @@ export default function AdminPage() {
         </div>
 
         {/* Sidebar Navigation */}
-        <nav className={`p-3 space-y-1.5 flex-1 ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
+        <nav className={`p-3 space-y-1.5 flex-1 overflow-y-auto ${isMobileMenuOpen ? "block" : "hidden md:block"}`}>
           <button
             type="button"
             onClick={() => {
@@ -395,7 +395,7 @@ export default function AdminPage() {
         </nav>
 
         {/* Sidebar Footer User & Logout */}
-        <div className="p-4 border-t border-slate-800/80 bg-slate-950/60">
+        <div className="p-4 border-t border-slate-800/80 bg-slate-950/60 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -418,7 +418,7 @@ export default function AdminPage() {
       </aside>
 
       {/* ==================== MAIN CONTENT AREA ==================== */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <main className="flex-1 flex flex-col min-w-0 h-full overflow-y-auto">
         {/* Top Header Bar */}
         <header className="h-16 border-b border-emerald-500/10 glass-panel px-6 flex items-center justify-between sticky top-0 z-20">
           <div>
@@ -429,7 +429,7 @@ export default function AdminPage() {
               {activeTab === "overview" && "Platform Operations & Metrics"}
             </h1>
             <p className="text-[11px] text-slate-400">
-              Multi-tenant voice receptionist control panel
+              Multi-tenant AI business management control panel
             </p>
           </div>
 

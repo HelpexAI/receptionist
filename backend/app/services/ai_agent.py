@@ -6,7 +6,7 @@ from uuid import UUID
 import datetime as dt
 from datetime import datetime, date, time
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.models import (
     Business,
@@ -143,10 +143,21 @@ CRITICAL RULES:
    - Keep responses short (1-2 friendly sentences), professional, and natural.
 """
     else:  # Restaurant
+        del_charges = getattr(business, "delivery_charges", 0.0) or 0.0
+        srv_charges = getattr(business, "service_charges", 0.0) or 0.0
+        charges_section = f"""
+RESTAURANT CHARGES & PRICING POLICIES:
+- Restaurant Name: {business.name}
+- Delivery Charges: Rs. {del_charges:.0f} {"(Free delivery)" if del_charges == 0 else "per delivery order"}
+- Service Charges: Rs. {srv_charges:.0f} {"(No service charge)" if srv_charges == 0 else "per order"}
+* When quoting bill totals for delivery: mention delivery charges (Rs. {del_charges:.0f}) and include it in the total bill.
+* When quoting service charges (if > 0): mention service charges (Rs. {srv_charges:.0f}) and include it in the total bill.
+"""
         base_prompt = f"""You are a warm, hospitable, and efficient bilingual host and order specialist at {business.name}.
 Today's Date: {current_date_str}, Current Time: {current_time_str}.
 (Use this for relative dates like "aaj", "today", "kal", "tomorrow").
 {contact_section}
+{charges_section}
 CRITICAL RESTAURANT ORDERING & CONVERSATION RULES:
 
 1. SCRIPT & LANGUAGE STRICT MATCHING:
@@ -154,17 +165,21 @@ CRITICAL RESTAURANT ORDERING & CONVERSATION RULES:
    - Use a polite, friendly hospitality tone (e.g., "Ji bilkul", "Zaroor! Main abhi aap ke liye menu share karta hoon").
 
 2. FULL FOOD ORDERING FLOW & EDGE CASES:
-   - MENU INQUIRIES:
+   - MENU INQUIRIES & VARIANTS/ADD-ONS:
      * When user asks for menu, food list, prices, or recommendations ("menu dikhao", "kya dishes hain", "send menu", "burgers dikhao"), CALL `get_menu` IMMEDIATELY.
      * Present menu items clearly in clean bullet points with item names, prices in Rs., and categories.
+     * If an item has variants (e.g. Regular Rs. 450, Large Rs. 650) or add-ons (e.g. Extra Cheese Rs. 80, Dip Rs. 50), MENTION them clearly so customer can pick their preference.
      * If they ask for a specific category (e.g. "Burgers" or "Drinks"), filter `get_menu(category=...)`.
-   - HANDLING ITEMS & CART:
+   - HANDLING ITEMS, VARIANTS, ADD-ONS & CART:
      * If user asks for an item NOT on the menu (e.g. Biryani when only burgers exist), politely explain that it's not currently available and recommend the closest available dishes from the menu. Never pretend unavailable dishes exist.
-     * Accurately track items, quantities, and customizations ("2 zinger burgers", "extra cheese", "no mayo", "spicy").
+     * When the customer specifies a variant/size (e.g. "Large zinger", "half karahi") or add-ons (e.g. "with extra cheese"), accurately note the chosen variant and add-ons.
+     * If an item has multiple sizes/variants and customer did not specify, ask: "Aap ko kaun sa size chahiye? [List variant options with prices]".
+     * Accurately track items, quantities, chosen variant, add-ons, and customizations ("2 large zinger burgers with extra cheese, no mayo, spicy").
      * Handle changes gracefully: adding items, removing items, changing quantities ("make it 2 instead of 1").
    - FULFILLMENT TYPE & DELIVERY DETAILS:
-     * Confirm whether they want **Delivery** or **Pickup/Takeaway** (or Dine-in).
-     * If Delivery: ask for their complete delivery address (House #, Street, Area) if not already given.
+     * Confirm whether they want **Delivery**, **Pickup/Takeaway**, or **Dine-in**.
+     * If Delivery: ask for their delivery address (House #, Street, Area) if not already given. Mention delivery charges if applicable.
+     * If Dine-in: if customer mentions a table (e.g. "table 3", "table number 5"), set order_type="dine_in" and pass table_number="3".
      * Ask for their name if not already provided in history. Use detected phone number ({customer_phone or ""}) unless the customer asks to change/provide another number!
    - MANDATORY ORDER CONFIRMATION BEFORE PLACING:
      * Before calling `place_order`, ALWAYS present a clear summary of the order:
@@ -310,16 +325,26 @@ RESTAURANT_TOOLS = [
                   "properties": {
                     "item_name": {"type": "string", "description": "Name of the dish or menu item"},
                     "quantity": {"type": "integer", "description": "Quantity of portions/items (minimum 1)"},
-                    "notes": {"type": ["string", "null"], "description": "Customizations like extra cheese, no onion, spicy, etc."}
+                    "variant": {"type": ["string", "null"], "description": "Selected variant/size name (e.g., Small, Medium, Large, Half, Full)"},
+                    "addons": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "List of chosen add-ons (e.g. ['Extra Cheese', 'Garlic Mayo'])"
+                    },
+                    "notes": {"type": ["string", "null"], "description": "Customizations like extra spicy, no onion, etc."}
                   },
                   "required": ["item_name", "quantity"]
                 },
-                "description": "List of dishes, quantities, and customizations"
+                "description": "List of dishes, quantities, variants, add-ons, and customizations"
               },
               "order_type": {
                 "type": "string",
                 "enum": ["delivery", "pickup", "dine_in"],
                 "description": "Fulfillment type: delivery, pickup, or dine_in (default: delivery)"
+              },
+              "table_number": {
+                "type": ["string", "null"],
+                "description": "Optional dining table number (if customer is dining in or ordering from a specific table, e.g. 'Table 4' or '4')"
               },
               "delivery_address": {
                 "type": ["string", "null"],
@@ -607,7 +632,10 @@ def execute_get_menu(business_id: UUID, db: Session, category: Optional[str] = N
                 "id": str(item.id),
                 "name": item.name,
                 "category": item.category,
-                "price": float(item.price)
+                "description": getattr(item, "description", None) or "",
+                "price": float(item.price),
+                "variants": getattr(item, "variants", None) or [],
+                "addons": getattr(item, "addons", None) or []
             }
             for item in items
         ]
@@ -699,6 +727,10 @@ def execute_reserve_table_and_order(
             qty = int(oi.get("quantity", 1))
             if not raw_name:
                 continue
+            selected_variant = oi.get("variant")
+            selected_addons = oi.get("addons") or []
+            if isinstance(selected_addons, str):
+                selected_addons = [selected_addons]
 
             menu_item = (
                 db.query(MenuItem)
@@ -710,19 +742,37 @@ def execute_reserve_table_and_order(
                 .first()
             )
             if menu_item:
-                price = float(menu_item.price)
-                subtotal = price * qty
+                unit_price = float(menu_item.price)
+                variant_name = None
+                if selected_variant and getattr(menu_item, "variants", None):
+                    for v in menu_item.variants:
+                        if isinstance(v, dict) and str(v.get("name", "")).strip().lower() == str(selected_variant).strip().lower():
+                            unit_price = float(v.get("price", unit_price))
+                            variant_name = v.get("name")
+                            break
+                if selected_addons and getattr(menu_item, "addons", None):
+                    for req_ad in selected_addons:
+                        req_clean = str(req_ad).strip().lower()
+                        for ad in menu_item.addons:
+                            if isinstance(ad, dict) and (ad.get("name", "").strip().lower() == req_clean or req_clean in ad.get("name", "").strip().lower()):
+                                unit_price += float(ad.get("price", 0.0))
+                                break
+                subtotal = unit_price * qty
                 total_bill += subtotal
                 processed_items.append({
                     "item_id": str(menu_item.id),
                     "name": menu_item.name,
-                    "price": price,
+                    "variant": variant_name or selected_variant,
+                    "addons": selected_addons,
+                    "price": unit_price,
                     "quantity": qty,
                     "subtotal": subtotal
                 })
             else:
                 processed_items.append({
                     "name": raw_name,
+                    "variant": selected_variant,
+                    "addons": selected_addons,
                     "quantity": qty
                 })
 
@@ -759,6 +809,7 @@ def execute_place_order(
     customer_phone: str,
     order_items: List[Dict[str, Any]],
     order_type: str = "delivery",
+    table_number: Optional[str] = None,
     delivery_address: Optional[str] = None,
     special_instructions: Optional[str] = None,
     channel: str = "whatsapp",
@@ -781,6 +832,10 @@ def execute_place_order(
         if qty < 1:
             qty = 1
         notes = item.get("notes")
+        selected_variant = item.get("variant")
+        selected_addons = item.get("addons") or []
+        if isinstance(selected_addons, str):
+            selected_addons = [selected_addons]
 
         # Fuzzy matching against database menu items
         matched = None
@@ -795,13 +850,34 @@ def execute_place_order(
                     break
 
         if matched:
-            price = float(matched.price)
-            subtotal = price * qty
+            unit_price = float(matched.price)
+            variant_name = None
+            if selected_variant and getattr(matched, "variants", None):
+                for v in matched.variants:
+                    if isinstance(v, dict) and str(v.get("name", "")).strip().lower() == str(selected_variant).strip().lower():
+                        unit_price = float(v.get("price", unit_price))
+                        variant_name = v.get("name")
+                        break
+
+            addons_list = []
+            if selected_addons and getattr(matched, "addons", None):
+                for req_ad in selected_addons:
+                    req_clean = str(req_ad).strip().lower()
+                    for ad in matched.addons:
+                        if isinstance(ad, dict) and (ad.get("name", "").strip().lower() == req_clean or req_clean in ad.get("name", "").strip().lower()):
+                            ad_price = float(ad.get("price", 0.0))
+                            unit_price += ad_price
+                            addons_list.append(ad.get("name"))
+                            break
+
+            subtotal = unit_price * qty
             total_bill += subtotal
             processed_items.append({
                 "item_id": str(matched.id),
                 "name": matched.name,
-                "price": price,
+                "variant": variant_name or selected_variant,
+                "addons": addons_list if addons_list else selected_addons,
+                "price": unit_price,
                 "quantity": qty,
                 "subtotal": round(subtotal, 2),
                 "notes": notes
@@ -815,11 +891,21 @@ def execute_place_order(
             total_bill += subtotal
             processed_items.append({
                 "name": raw_name,
+                "variant": selected_variant,
+                "addons": selected_addons,
                 "price": custom_price,
                 "quantity": qty,
                 "subtotal": round(subtotal, 2),
                 "notes": notes
             })
+
+    # Add optional delivery and service charges configured by the restaurant
+    clean_ord_type = order_type.strip().lower() if order_type else "delivery"
+    biz = db.query(Business).filter(Business.id == business_id).first()
+    if biz:
+        del_fee = (getattr(biz, "delivery_charges", 0.0) or 0.0) if clean_ord_type == "delivery" else 0.0
+        svc_fee = getattr(biz, "service_charges", 0.0) or 0.0
+        total_bill += del_fee + svc_fee
 
     # Generate unique readable order number: ORD-XXXX
     ord_num = f"ORD-{random.randint(1000, 9999)}"
@@ -838,6 +924,7 @@ def execute_place_order(
         customer_name=customer_name.strip() or "Valued Guest",
         customer_phone=customer_phone.strip(),
         order_type=order_type.strip().lower() if order_type else "delivery",
+        table_number=table_number.strip() if table_number else None,
         delivery_address=delivery_address.strip() if delivery_address else None,
         items=processed_items,
         total_amount=round(total_bill, 2),
@@ -860,8 +947,11 @@ def execute_place_order(
         "whatsapp_chat_id": order.whatsapp_chat_id,
         "whatsapp_session": order.whatsapp_session,
         "order_type": order.order_type,
+        "table_number": order.table_number,
         "delivery_address": order.delivery_address,
         "items": processed_items,
+        "delivery_fee": del_fee if 'del_fee' in locals() else 0.0,
+        "service_fee": svc_fee if 'svc_fee' in locals() else 0.0,
         "total_amount": float(order.total_amount),
         "special_instructions": order.special_instructions,
         "message": f"Order #{order.order_number} has been placed successfully and dispatched to kitchen."
@@ -871,19 +961,42 @@ def execute_get_order_status(
     business_id: UUID,
     db: Session,
     order_number: Optional[str] = None,
-    customer_phone: Optional[str] = None
+    customer_phone: Optional[str] = None,
+    whatsapp_chat_id: Optional[str] = None
 ) -> Dict[str, Any]:
     query = db.query(RestaurantOrder).filter(RestaurantOrder.business_id == business_id)
 
     if order_number and str(order_number).strip():
-        clean_ord = str(order_number).strip().upper()
-        if not clean_ord.startswith("ORD-") and clean_ord.isdigit():
-            clean_ord = f"ORD-{clean_ord}"
-        query = query.filter(RestaurantOrder.order_number.ilike(f"%{clean_ord}%"))
-    elif customer_phone and str(customer_phone).strip():
-        digits = "".join(c for c in str(customer_phone) if c.isdigit())
-        if len(digits) >= 6:
-            query = query.filter(RestaurantOrder.customer_phone.ilike(f"%{digits[-6:]}%"))
+        raw_ord = str(order_number).strip().upper().lstrip("#")
+        clean_digits = "".join(c for c in raw_ord if c.isdigit())
+        conditions = [RestaurantOrder.order_number.ilike(f"%{raw_ord}%")]
+        if not raw_ord.startswith("ORD-") and clean_digits:
+            conditions.append(RestaurantOrder.order_number.ilike(f"%ORD-{clean_digits}%"))
+        if not raw_ord.startswith("POS-") and clean_digits:
+            conditions.append(RestaurantOrder.order_number.ilike(f"%POS-{clean_digits}%"))
+        query = query.filter(or_(*conditions))
+    else:
+        # Match by phone number or whatsapp chat id
+        conds = []
+        if customer_phone and str(customer_phone).strip():
+            raw_phone = str(customer_phone).strip()
+            digits = "".join(c for c in raw_phone if c.isdigit())
+            if len(digits) >= 6:
+                conds.append(RestaurantOrder.customer_phone.ilike(f"%{digits[-6:]}%"))
+            conds.append(RestaurantOrder.customer_phone.ilike(f"%{raw_phone}%"))
+            conds.append(RestaurantOrder.whatsapp_chat_id == raw_phone)
+            if "@" in raw_phone:
+                u_part = raw_phone.split("@")[0]
+                conds.append(RestaurantOrder.customer_phone.ilike(f"%{u_part[-6:]}%"))
+                conds.append(RestaurantOrder.whatsapp_chat_id.ilike(f"%{u_part}%"))
+        if whatsapp_chat_id and str(whatsapp_chat_id).strip():
+            w_chat = str(whatsapp_chat_id).strip()
+            conds.append(RestaurantOrder.whatsapp_chat_id == w_chat)
+            w_digits = "".join(c for c in w_chat if c.isdigit())
+            if len(w_digits) >= 6:
+                conds.append(RestaurantOrder.customer_phone.ilike(f"%{w_digits[-6:]}%"))
+        if conds:
+            query = query.filter(or_(*conds))
 
     order = query.order_by(RestaurantOrder.created_at.desc()).first()
     if not order:
@@ -892,22 +1005,57 @@ def execute_get_order_status(
             "message": "No active order found with these details. Please verify your order number or phone."
         }
 
+    # Auto-advance cooking timer if 20 minutes have elapsed
+    if order.status in ["preparing", "in_kitchen"] and order.cooking_started_at:
+        now_dt = datetime.now(dt.timezone.utc)
+        c_time = order.cooking_started_at
+        if c_time.tzinfo is None:
+            c_time = c_time.replace(tzinfo=dt.timezone.utc)
+        elapsed_secs = (now_dt - c_time).total_seconds()
+        if elapsed_secs >= 20 * 60:
+            order.status = "ready"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
     status_descriptions = {
         "received": "Order receive ho chuka hai aur kitchen queue mein hai (Received / Pending in Kitchen).",
         "in_kitchen": "Order kitchen mein fresh ban raha hai (Currently being prepared in kitchen).",
-        "ready": "Order ready ho chuka hai (Ready for pickup / Out for delivery)!",
+        "preparing": "Order kitchen mein fresh ban raha hai (Currently being prepared in kitchen).",
+        "ready": "Order ready ho chuka hai (Freshly prepared and ready for pickup / delivery)!",
+        "out_for_delivery": "Order rider ke pass hai aur aapki taraf rawana ho chuka hai (Out for delivery)!",
+        "reached": "Rider aapki location par pohanch chuka hai (Rider has reached your address)!",
+        "delivered": "Order successfully deliver ho chuka hai. Enjoy your meal! (Delivered)",
+        "picked_up": "Order counter se pickup ho chuka hai (Picked Up).",
         "completed": "Order deliver / complete ho chuka hai. Shukriya!",
-        "cancelled": "Order cancel ho chuka hai."
+        "cancelled": "Order cancel ho chuka hai (Cancelled)."
     }
+
+    # Remaining cooking minutes if applicable
+    rem_mins = None
+    if order.status in ["preparing", "in_kitchen"] and order.cooking_started_at:
+        now_dt = datetime.now(dt.timezone.utc)
+        c_time = order.cooking_started_at
+        if c_time.tzinfo is None:
+            c_time = c_time.replace(tzinfo=dt.timezone.utc)
+        elapsed = (now_dt - c_time).total_seconds()
+        rem_mins = max(1, 20 - int(elapsed / 60))
+
+    explanation = status_descriptions.get(order.status, f"Current status: {order.status}")
+    if rem_mins is not None and order.status in ["preparing", "in_kitchen"]:
+        explanation += f" Estimated remaining time: ~{rem_mins} minutes."
 
     return {
         "found": True,
         "order_number": order.order_number,
         "status": order.status,
-        "status_explanation": status_descriptions.get(order.status, f"Current status: {order.status}"),
+        "status_explanation": explanation,
+        "estimated_cooking_minutes_remaining": rem_mins,
         "total_amount": float(order.total_amount),
         "items": order.items,
         "order_type": order.order_type,
+        "table_number": order.table_number,
         "delivery_address": order.delivery_address,
         "created_at": order.created_at.strftime("%I:%M %p") if order.created_at else ""
     }
@@ -1122,6 +1270,7 @@ def process_chat(
                             customer_phone=c_phone,
                             order_items=fn_args.get("order_items", []),
                             order_type=fn_args.get("order_type", "delivery"),
+                            table_number=fn_args.get("table_number"),
                             delivery_address=fn_args.get("delivery_address"),
                             special_instructions=fn_args.get("special_instructions"),
                             channel="whatsapp",
@@ -1137,7 +1286,8 @@ def process_chat(
                             business.id,
                             db,
                             order_number=fn_args.get("order_number"),
-                            customer_phone=c_phone
+                            customer_phone=c_phone,
+                            whatsapp_chat_id=whatsapp_chat_id
                         )
                     else:
                         tool_result = {"error": f"Unknown tool: {clean_name}"}

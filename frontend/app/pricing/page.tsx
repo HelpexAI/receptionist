@@ -102,7 +102,7 @@ export default function PricingPage() {
         <h1 className="text-3xl sm:text-5xl font-bold text-slate-900 dark:text-white tracking-tight leading-tight">
           Pick the Plan that Powers Your{" "}
           <span className="text-[#D97757]">
-            AI Reception Desk
+            AI Business Management Platform
           </span>
         </h1>
         <p className="text-sm sm:text-base text-[#5E5D59] dark:text-[#B0AEA5] max-w-xl mx-auto leading-relaxed">

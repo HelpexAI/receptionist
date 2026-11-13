@@ -155,7 +155,7 @@ export default function LoginPage() {
             href="/"
             className="text-xs text-[#5E5D59] hover:text-[#D97757] dark:text-[#B0AEA5] dark:hover:text-[#E58A6B] transition-colors inline-flex items-center gap-1"
           >
-            <span>← Back to VoiceReceptionist Home</span>
+            <span>← Back to AI Business Management Home</span>
           </Link>
         </div>
       </div>

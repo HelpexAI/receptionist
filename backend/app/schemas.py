@@ -84,11 +84,25 @@ class BusinessProfileResponse(BaseModel):
     business_type: str
     username: str
     widget_token: str
+    slug: Optional[str] = None
+    delivery_charges: Optional[float] = 0.0
+    service_charges: Optional[float] = 0.0
     inbound_phone: Optional[str] = None
     is_widget_enabled: bool = True
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class RestaurantSettingsUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    delivery_charges: Optional[float] = Field(default=None, ge=0)
+    service_charges: Optional[float] = Field(default=None, ge=0)
+
+class RestaurantSettingsResponse(BaseModel):
+    name: str
+    slug: Optional[str] = None
+    delivery_charges: float = 0.0
+    service_charges: float = 0.0
 
 # ==================== DEMO LEAD SCHEMAS ====================
 
@@ -190,11 +204,39 @@ class ClinicAppointmentResponse(BaseModel):
 
 # ==================== RESTAURANT SCHEMAS ====================
 
+class MenuCategoryCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, examples=["Burgers"])
+    description: Optional[str] = None
+    display_order: Optional[int] = 0
+
+class MenuCategoryResponse(BaseModel):
+    id: UUID
+    business_id: UUID
+    name: str
+    description: Optional[str] = None
+    display_order: int = 0
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 class MenuItemCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, examples=["Margherita Pizza"])
     category: str = Field(..., min_length=1, max_length=100, examples=["Mains"])
     price: float = Field(..., ge=0.0, examples=[14.99])
     is_available: bool = Field(default=True, examples=[True])
+    description: Optional[str] = None
+    variants: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    addons: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+
+class MenuItemUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    is_available: Optional[bool] = None
+    description: Optional[str] = None
+    variants: Optional[List[Dict[str, Any]]] = None
+    addons: Optional[List[Dict[str, Any]]] = None
 
 class MenuItemUpdateAvailabilityRequest(BaseModel):
     is_available: Optional[bool] = Field(default=None, description="Set availability explicitly or omit to toggle")
@@ -206,6 +248,9 @@ class MenuItemResponse(BaseModel):
     category: str
     price: float
     is_available: bool
+    description: Optional[str] = None
+    variants: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    addons: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -240,13 +285,29 @@ class RestaurantOrderCreateRequest(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=255, examples=["Arslan"])
     customer_phone: str = Field(..., min_length=3, max_length=50, examples=["+923001234567"])
     order_type: str = Field(default="delivery", pattern="^(delivery|pickup|dine_in)$")
+    table_number: Optional[str] = None
     delivery_address: Optional[str] = None
     items: List[Dict[str, Any]] = Field(default_factory=list)
     special_instructions: Optional[str] = None
     whatsapp_chat_id: Optional[str] = None
 
+class RestaurantOrderUpdateRequest(BaseModel):
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    order_type: Optional[str] = Field(default=None, pattern="^(delivery|pickup|dine_in)$")
+    table_number: Optional[str] = None
+    delivery_address: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
+    special_instructions: Optional[str] = None
+    status: Optional[str] = Field(default=None, pattern="^(received|in_kitchen|preparing|ready|out_for_delivery|reached|delivered|picked_up|completed|cancelled)$")
+
 class RestaurantOrderStatusUpdateRequest(BaseModel):
-    status: str = Field(..., pattern="^(received|in_kitchen|ready|completed|cancelled)$")
+    status: str = Field(..., pattern="^(received|in_kitchen|preparing|ready|out_for_delivery|reached|delivered|picked_up|completed|cancelled)$")
+    rider_name: Optional[str] = None
+
+class RiderOrderStatusUpdateRequest(BaseModel):
+    status: str = Field(..., pattern="^(reached|delivered|out_for_delivery)$")
+    rider_name: Optional[str] = None
 
 class RestaurantOrderResponse(BaseModel):
     id: UUID
@@ -255,10 +316,14 @@ class RestaurantOrderResponse(BaseModel):
     customer_name: str
     customer_phone: str
     order_type: str
+    table_number: Optional[str] = None
     delivery_address: Optional[str] = None
     items: List[Any] = Field(default_factory=list)
     total_amount: float
     status: str
+    cooking_started_at: Optional[datetime] = None
+    rider_name: Optional[str] = None
+    rider_phone: Optional[str] = None
     special_instructions: Optional[str] = None
     channel: Optional[str] = "whatsapp"
     whatsapp_chat_id: Optional[str] = None
@@ -279,3 +344,25 @@ class WidgetChatResponse(BaseModel):
     action_taken: Optional[str] = None
     booking_details: Optional[Dict[str, Any]] = None
     audio_url: Optional[str] = None
+
+# ==================== OPERATIONAL SCREENS & PINS (KDS, RIDER, POS) ====================
+
+class KitchenPinUpdateRequest(BaseModel):
+    pin: str = Field(..., min_length=4, max_length=20, examples=["1234"])
+
+class ScreenPinsResponse(BaseModel):
+    kitchen_pin: str
+    rider_pin: str
+    pos_pin: str
+    slug: Optional[str] = None
+    business_name: Optional[str] = None
+
+class ScreenPinsUpdateRequest(BaseModel):
+    kitchen_pin: Optional[str] = Field(default=None, min_length=4, max_length=20)
+    rider_pin: Optional[str] = Field(default=None, min_length=4, max_length=20)
+    pos_pin: Optional[str] = Field(default=None, min_length=4, max_length=20)
+
+class KitchenVerifyRequest(BaseModel):
+    slug: str = Field(..., min_length=1, examples=["my-restaurant"])
+    pin: str = Field(..., min_length=4, max_length=20, examples=["1234"])
+    screen_type: Optional[str] = Field(default="kitchen", examples=["kitchen", "rider", "pos"])

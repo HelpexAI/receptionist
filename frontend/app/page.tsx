@@ -50,10 +50,6 @@ export default function HomePage() {
   const [leadSubmitted, setLeadSubmitted] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
 
-  // Interactive Simulator State
-  const [demoType, setDemoType] = useState<"clinic" | "restaurant">("clinic");
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-
   // FAQ state
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
@@ -132,78 +128,70 @@ export default function HomePage() {
           {/* Top Beta Badge */}
           <div className="inline-flex flex-wrap items-center justify-center gap-2 px-4 py-2 rounded-2xl bg-[#D97757]/15 border border-[#D97757]/30 text-[#D97757] dark:text-[#E58A6B] text-xs font-bold shadow-md shadow-[#D97757]/10">
             <Sparkles className="w-4 h-4 text-[#D97757]" />
-            <span>Beta Mode Live: Get Early Access &amp; Enjoy 1 Year of Unlimited Pro Plan for FREE!</span>
+            <span>AI Business Management • Unified POS, Station Screens &amp; 24/7 Autonomous AI</span>
           </div>
 
           <div className="flex items-center justify-center gap-2.5 text-xs text-[#5E5D59] dark:text-[#B0AEA5]">
             <span className="w-2 h-2 rounded-full bg-[#D97757] animate-ping" />
-            <span>Autonomous Voice &amp; WhatsApp AI Reception Desk</span>
+            <span>Point of Sale • Kitchen Display • Rider Fleet • WhatsApp AI</span>
             <span>•</span>
             <span className="text-[#D97757] font-mono font-bold">
-              {apiOnline ? "AI Engine Online" : "Connecting..."}
+              {apiOnline ? "System Engine Online" : "Connecting..."}
             </span>
           </div>
 
           {/* Main Title */}
           <h1 className="text-4xl sm:text-6xl lg:text-7xl font-normal tracking-tight text-slate-900 dark:text-white leading-[1.12]">
-            Never Miss a Patient or Guest Again. Meet Your{" "}
+            Autonomous Business Operations &amp; Management with{" "}
             <span className="text-[#D97757]">
-              24/7 AI Receptionist
+              AI Business Management
             </span>
           </h1>
 
           {/* Subtitle */}
-          <p className="text-base sm:text-lg lg:text-xl text-[#5E5D59] dark:text-[#B0AEA5] max-w-2xl mx-auto leading-relaxed">
-            Empower your medical clinic or restaurant with an autonomous bilingual receptionist. Speaks Roman Urdu &amp; English, locks appointments and dining tables in real-time. We are in Beta — sign up now for 1 Year of Unlimited access at zero cost!
+          <p className="text-base sm:text-lg lg:text-xl text-[#5E5D59] dark:text-[#B0AEA5] max-w-3xl mx-auto leading-relaxed">
+            All-in-one operating platform for restaurants, cafes, and healthcare practices. Seamlessly punch orders on touch POS, coordinate kitchen cooking timers &amp; rider delivery dispatch, while bilingual AI answers customer calls and WhatsApp messages 24/7.
           </p>
 
           {/* Primary Action Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 pt-4">
-            <button
-              type="button"
-              onClick={() => {
-                setLeadSubmitted(false);
-                setIsDemoModalOpen(true);
-              }}
+            <Link
+              href="/login"
               className="w-full sm:w-auto px-7 py-3.5 rounded-xl font-bold text-sm text-white bg-[#D97757] hover:bg-[#C6613F] transition-all shadow-lg shadow-[#D97757]/25 flex items-center justify-center gap-2.5 cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
             >
               <Sparkles className="w-4 h-4" />
-              <span>Claim Free 1-Year Early Access</span>
+              <span>Launch Business Portal</span>
               <ArrowRight className="w-4 h-4" />
-            </button>
+            </Link>
 
             <Link
               href="/pricing"
               className="w-full sm:w-auto px-7 py-3.5 rounded-xl font-bold text-sm text-slate-800 bg-[#F0EEE6] hover:bg-[#E8E6DC] border border-[#E8E6DC] dark:text-slate-200 dark:bg-[#30302E] dark:hover:bg-[#3D3D3A] dark:border-[#3D3D3A] hover:border-[#D97757]/40 transition-all flex items-center justify-center gap-2 shadow-sm"
             >
-              <span>Explore Plans (200 Free Bookings)</span>
+              <span>Explore Plans (200 Free Orders)</span>
             </Link>
 
-            <Link
-              href="/login"
+            <a
+              href="#solutions"
               className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-semibold text-sm text-[#5E5D59] hover:text-[#141413] dark:text-[#B0AEA5] dark:hover:text-white transition-colors flex items-center justify-center gap-1.5"
             >
-              <span>Portal Login &rarr;</span>
-            </Link>
+              <span>View Stations &amp; Features &darr;</span>
+            </a>
           </div>
 
-          {/* Trust stats pill bar */}
-          <div className="pt-10 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl mx-auto text-left">
+          {/* Trust stats pill bar (0 Conflict removed) */}
+          <div className="pt-10 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto text-left">
             <div className="glass-panel p-4 rounded-2xl border border-emerald-500/20 shadow-sm">
-              <span className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono block">99.8%</span>
-              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Appointment Accuracy</span>
+              <span className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono block">Real-Time</span>
+              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">POS · Kitchen KDS · Rider Sync</span>
             </div>
             <div className="glass-panel p-4 rounded-2xl border border-teal-500/20 shadow-sm">
               <span className="text-2xl font-extrabold text-teal-700 dark:text-teal-400 font-mono block">&lt;1.2s</span>
-              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Voice Synthesis Latency</span>
+              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Bilingual Voice &amp; Chat AI</span>
             </div>
             <div className="glass-panel p-4 rounded-2xl border border-cyan-500/20 shadow-sm">
               <span className="text-2xl font-extrabold text-cyan-700 dark:text-cyan-400 font-mono block">24/7/365</span>
-              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Continuous Availability</span>
-            </div>
-            <div className="glass-panel p-4 rounded-2xl border border-emerald-500/20 shadow-sm">
-              <span className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono block">0 Conflict</span>
-              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Atomic Slot Locking</span>
+              <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Continuous Order Automation</span>
             </div>
           </div>
         </div>
@@ -240,173 +228,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ==================== 3. INTERACTIVE AGENT DEMO SIMULATOR ==================== */}
-      <section id="demo" className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
-        <div className="glass-panel p-6 sm:p-9 rounded-3xl border border-emerald-500/25 glow-emerald relative shadow-xl">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                <Bot className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>Interactive AI Voice &amp; Chat Preview</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-bold uppercase tracking-wider">
-                    Bilingual
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Natural Roman Urdu &amp; English dialogue processing with real-time slot checking
-                </p>
-              </div>
-            </div>
-
-            {/* Toggle Demo Type */}
-            <div className="flex items-center gap-2">
-              <div className="p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 flex items-center text-xs">
-                <button
-                  type="button"
-                  onClick={() => setDemoType("clinic")}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                    demoType === "clinic"
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  Medical Clinic
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDemoType("restaurant")}
-                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
-                    demoType === "restaurant"
-                      ? "bg-amber-600 text-white shadow-sm"
-                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  Restaurant Dining
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsPlayingAudio(!isPlayingAudio)}
-                className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                  isPlayingAudio
-                    ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30"
-                    : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50"
-                }`}
-                title="Toggle Voice Wave Simulation"
-              >
-                <Volume2 className={`w-4 h-4 ${isPlayingAudio ? "animate-pulse" : ""}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* Conversation Simulation */}
-          {demoType === "clinic" ? (
-            <div className="pt-6 space-y-4 max-w-3xl mx-auto animate-in fade-in">
-              {/* Patient Message */}
-              <div className="flex justify-end">
-                <div className="max-w-md p-4 rounded-2xl bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-800/90 dark:text-slate-200 text-xs dark:border-slate-700/60 shadow-sm">
-                  <span className="font-semibold text-emerald-700 dark:text-emerald-400 block text-[10px] uppercase mb-1">
-                    Patient (Roman Urdu)
-                  </span>
-                  <p>&ldquo;Mujhe kal Dr. Sarah Jenkins se appointment chahiye, bukhar aur sar dard hai.&rdquo;</p>
-                </div>
-              </div>
-
-              {/* AI Response */}
-              <div className="flex justify-start">
-                <div className="max-w-lg p-4 rounded-2xl bg-emerald-50 text-emerald-950 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-100 text-xs dark:border-emerald-500/30 shadow-md">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-bold text-emerald-700 dark:text-emerald-400 text-[10px] uppercase flex items-center gap-1.5">
-                      <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                      AI Clinic Receptionist (Voice + Text)
-                    </span>
-                    <span className="text-[10px] text-teal-700 dark:text-teal-300 font-mono font-bold">
-                      0.8s response
-                    </span>
-                  </div>
-                  <p className="leading-relaxed">
-                    &ldquo;Ji bilkul! Dr. Sarah Jenkins General Physician hain aur fever &amp; headache treat karti hain. Kal subah 09:00 AM aur 09:30 AM ke slots available hain. Consultation fee Rs. 2,000 hai. Aap ka poora naam aur phone number kya hai?&rdquo;
-                  </p>
-
-                  {/* Audio Waveform */}
-                  <div className="mt-3 pt-2.5 border-t border-emerald-500/20 flex items-center gap-2">
-                    <Volume2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <div className="flex items-center gap-1 h-3 flex-1">
-                      {[40, 75, 50, 90, 60, 100, 45, 80, 55, 95, 65, 85, 40, 70].map((h, i) => (
-                        <div
-                          key={i}
-                          className={`w-1 rounded-full transition-all ${
-                            isPlayingAudio ? "bg-emerald-500 animate-pulse" : "bg-emerald-600/30"
-                          }`}
-                          style={{ height: `${isPlayingAudio ? h : 30}%` }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-semibold">
-                      Bilingual Speech Engine
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="pt-6 space-y-4 max-w-3xl mx-auto animate-in fade-in">
-              {/* Guest Message */}
-              <div className="flex justify-end">
-                <div className="max-w-md p-4 rounded-2xl bg-slate-100 text-slate-800 border border-slate-200 dark:bg-slate-800/90 dark:text-slate-200 text-xs dark:border-slate-700/60 shadow-sm">
-                  <span className="font-semibold text-amber-700 dark:text-amber-400 block text-[10px] uppercase mb-1">
-                    Guest (Roman Urdu &amp; English)
-                  </span>
-                  <p>&ldquo;Kal raat 8 baje 4 logon ke liye table book ho sakti hai? Aur BBQ Platter available hai?&rdquo;</p>
-                </div>
-              </div>
-
-              {/* AI Response */}
-              <div className="flex justify-start">
-                <div className="max-w-lg p-4 rounded-2xl bg-amber-50 text-amber-950 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-100 text-xs dark:border-amber-500/30 shadow-md">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-bold text-amber-700 dark:text-amber-400 text-[10px] uppercase flex items-center gap-1.5">
-                      <Sparkles className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-                      AI Dining Receptionist (Voice + Text)
-                    </span>
-                    <span className="text-[10px] text-amber-700 dark:text-amber-300 font-mono font-bold">
-                      0.9s response
-                    </span>
-                  </div>
-                  <p className="leading-relaxed">
-                    &ldquo;Khush Amdeed! Kal raat 8:00 PM par 4 guests ke liye Indoor Table 4 available hai. Aur hamara Special BBQ Platter bilkul fresh in-stock hai! Kya main aap ki table reserve kar loon?&rdquo;
-                  </p>
-
-                  {/* Audio Waveform */}
-                  <div className="mt-3 pt-2.5 border-t border-amber-500/20 flex items-center gap-2">
-                    <Volume2 className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <div className="flex items-center gap-1 h-3 flex-1">
-                      {[50, 85, 45, 95, 70, 90, 60, 75, 65, 80, 50, 70, 60, 85].map((h, i) => (
-                        <div
-                          key={i}
-                          className={`w-1 rounded-full transition-all ${
-                            isPlayingAudio ? "bg-amber-500 animate-pulse" : "bg-amber-600/30"
-                          }`}
-                          style={{ height: `${isPlayingAudio ? h : 30}%` }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[10px] font-mono text-amber-700 dark:text-amber-400 font-semibold">
-                      Live Table Availability
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ==================== 4. HOW IT WORKS (3 SIMPLE STEPS) ==================== */}
+      {/* ==================== 3. HOW IT WORKS (3 SIMPLE STEPS) ==================== */}
       <section className="py-16 md:py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200 dark:border-slate-800/80">
         <div className="text-center max-w-3xl mx-auto mb-14">
           <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block mb-2">
@@ -426,10 +248,10 @@ export default function HomePage() {
               01
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              Connect WhatsApp or Web
+              Configure Stations &amp; WhatsApp
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              Scan your WhatsApp Web QR code or paste our 1-line script tag onto your clinic website or restaurant landing page.
+              Set up your menu catalog or doctor roster, generate 4-digit station PINs for POS &amp; Kitchen, and scan WhatsApp QR in under 60 seconds.
             </p>
           </div>
 
@@ -438,10 +260,10 @@ export default function HomePage() {
               02
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              Configure Roster &amp; Hours
+              Coordinate Live Operations
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              Add your doctors, consultation fees, and working hours — or your dining tables and menu items with in-stock toggles.
+              Punch orders on touch POS, track 20-min automated cooking timers on Kitchen KDS, and dispatch riders with real-time delivery status updates.
             </p>
           </div>
 
@@ -450,16 +272,16 @@ export default function HomePage() {
               03
             </div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              AI Handles Bookings 24/7
+              Autonomous AI Reception 24/7
             </h3>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              Calls and chats are answered instantly in Roman Urdu &amp; English. Confirmed bookings appear immediately in your live portal.
+              Customers talk or text naturally in Roman Urdu &amp; English. The AI takes food orders, quotes delivery charges, and books appointments seamlessly.
             </p>
           </div>
         </div>
       </section>
 
-      {/* ==================== 5. SOLUTIONS COMPARISON ==================== */}
+      {/* ==================== 4. SOLUTIONS COMPARISON ==================== */}
       <section id="solutions" className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200 dark:border-slate-800/80">
         <div className="text-center max-w-3xl mx-auto mb-14">
           <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block mb-2">
@@ -469,7 +291,7 @@ export default function HomePage() {
             Built Specifically for Clinics &amp; Restaurants
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-2">
-            Pre-trained industry intelligence designed for real-world operations
+            Unified operations, station screens, and autonomous AI intelligence
           </p>
         </div>
 
@@ -499,11 +321,11 @@ export default function HomePage() {
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                <span>Atomic database locks eliminating double-booking disputes 100%.</span>
+                <span>One-click patient cancellation and real-time slot release workflow.</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                <span>One-click patient cancellation and slot release workflow.</span>
+                <span>WhatsApp and web voice widget with bilingual Roman Urdu &amp; English synthesis.</span>
               </li>
             </ul>
 
@@ -526,29 +348,29 @@ export default function HomePage() {
             </div>
             <div>
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                Restaurants, Bistros &amp; Cafes
+                Restaurants, Bistros &amp; Cloud Kitchens
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Capture dining reservations, answer menu questions, and accept advance orders hands-free.
+                Full-suite operations: Touch POS terminal, live Kitchen Display (KDS), Rider Fleet dispatch, and 24/7 WhatsApp AI receptionist.
               </p>
             </div>
 
             <ul className="space-y-3 text-xs text-slate-700 dark:text-slate-300">
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <span>Dynamic party seating and real-time dining table capacity verification.</span>
+                <span>Touch POS screen with instant item selection, Dine-in table #, and 80mm thermal receipts.</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <span>Interactive food catalog with instant in-stock/sold-out kitchen toggles.</span>
+                <span>Kitchen Display System (KDS) with 20-minute automated cooking timers and station PINs.</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <span>Guest dietary requirement handling and special celebration requests.</span>
+                <span>Mobile-first Rider Delivery Fleet portal with real-time reached &amp; delivered updates.</span>
               </li>
               <li className="flex items-start gap-2.5">
                 <CheckCircle2 className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                <span>Kitchen dispatch notifications sent directly to staff.</span>
+                <span>24/7 bilingual WhatsApp receptionist with menu recommendations and custom delivery fees.</span>
               </li>
             </ul>
 
@@ -566,7 +388,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ==================== 6. PRICING SECTION (2 CARDS EMBEDDED) ==================== */}
+      {/* ==================== 5. PRICING SECTION (2 CARDS EMBEDDED) ==================== */}
       <section id="pricing" className="py-16 md:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200 dark:border-slate-800/80">
         <div className="text-center max-w-3xl mx-auto mb-12">
           <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block mb-2">
@@ -704,66 +526,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ==================== 7. TESTIMONIALS ==================== */}
-      <section className="py-16 md:py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-slate-200 dark:border-slate-800/80">
-        <div className="text-center max-w-3xl mx-auto mb-14">
-          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block mb-2">
-            Client Success Stories
-          </span>
-          <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white">
-            Loved by Medical Practices &amp; Dining Hotspots
-          </h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="glass-panel p-6 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
-            <div className="flex items-center gap-1 text-amber-500">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-amber-500" />
-              ))}
-            </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed italic">
-              &ldquo;Patients love how naturally the AI speaks Roman Urdu. It triage symptoms, books appointments with Dr. Sarah Jenkins, and has eliminated our front-desk phone congestion completely.&rdquo;
-            </p>
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-              <span className="font-bold text-xs text-slate-900 dark:text-white block">Dr. Tariq Mahmood</span>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">Director, Lahore Medical Complex</span>
-            </div>
-          </div>
-
-          <div className="glass-panel p-6 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
-            <div className="flex items-center gap-1 text-amber-500">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-amber-500" />
-              ))}
-            </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed italic">
-              &ldquo;On Friday and Saturday nights, we used to miss dozens of WhatsApp reservation inquiries. Now the AI receptionist books tables, confirms party size, and notifies our kitchen in real-time.&rdquo;
-            </p>
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-              <span className="font-bold text-xs text-slate-900 dark:text-white block">Hamza Siddiqui</span>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">General Manager, Artisan Bistro</span>
-            </div>
-          </div>
-
-          <div className="glass-panel p-6 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
-            <div className="flex items-center gap-1 text-amber-500">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="w-4 h-4 fill-amber-500" />
-              ))}
-            </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed italic">
-              &ldquo;Setting up the WhatsApp QR code took literally 30 seconds. The database locking is rock-solid — not a single double booking across our 4 dental consultation rooms.&rdquo;
-            </p>
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-              <span className="font-bold text-xs text-slate-900 dark:text-white block">Dr. Ayesha Malik</span>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">Head of Dental Surgery, Apex Clinic</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ==================== 8. FAQ ACCORDION ==================== */}
+      {/* ==================== 6. FAQ ACCORDION ==================== */}
       <section className="py-16 md:py-20 px-4 sm:px-6 lg:px-8 max-w-3xl mx-auto border-t border-slate-200 dark:border-slate-800/80">
         <div className="text-center mb-10">
           <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block mb-2">
@@ -805,27 +568,23 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ==================== 9. BOTTOM CONVERSION BANNER ==================== */}
+      {/* ==================== 7. BOTTOM CONVERSION BANNER ==================== */}
       <section className="py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="p-8 sm:p-12 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white text-center shadow-2xl relative overflow-hidden">
           <div className="relative z-10 space-y-4 max-w-2xl mx-auto">
             <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-              Ready to Upgrade to 24/7 Autonomous Reception?
+              Ready to Upgrade to AI Business Management?
             </h2>
             <p className="text-xs sm:text-sm text-emerald-50 leading-relaxed max-w-lg mx-auto">
-              Empower your staff, delight patients and dining guests, and never miss a revenue opportunity again.
+              Empower your staff, coordinate point of sale &amp; live kitchen operations, delight guests, and never miss an order again.
             </p>
             <div className="pt-3 flex flex-col sm:flex-row items-center justify-center gap-3.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setLeadSubmitted(false);
-                  setIsDemoModalOpen(true);
-                }}
+              <Link
+                href="/login"
                 className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-white text-emerald-950 font-bold text-xs hover:bg-emerald-50 transition-all shadow-lg cursor-pointer"
               >
-                Schedule Live Demo
-              </button>
+                Sign In to Portal
+              </Link>
               <Link
                 href="/pricing"
                 className="w-full sm:w-auto px-7 py-3.5 rounded-xl bg-emerald-700/60 hover:bg-emerald-700/80 text-white font-bold text-xs border border-white/20 transition-all flex items-center justify-center gap-1.5"
@@ -838,7 +597,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ==================== 10. FOOTER ==================== */}
+      {/* ==================== 8. FOOTER ==================== */}
       <footer className="border-t border-slate-200 dark:border-slate-800/80 py-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 text-xs text-slate-500 dark:text-slate-400">
           <div className="flex items-center gap-3">
@@ -846,8 +605,8 @@ export default function HomePage() {
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <span className="font-bold text-slate-900 dark:text-white block">VoiceReceptionist Platform</span>
-              <span>© {new Date().getFullYear()} VoiceReceptionist Inc. All rights reserved.</span>
+              <span className="font-bold text-slate-900 dark:text-white block">AI Business Management Platform</span>
+              <span>© {new Date().getFullYear()} AI Business Management Inc. All rights reserved.</span>
             </div>
           </div>
 
